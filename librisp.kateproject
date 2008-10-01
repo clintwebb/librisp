@@ -1,0 +1,35 @@
+[Dir admin]
+Dirs=
+Files=
+
+[Dir docs]
+Dirs=
+Files=notes.txt
+
+[Dir src]
+Dirs=librisp/book/web/examples
+Files=
+
+[Dir src/book]
+Dirs=
+Files=risp.html
+
+[Dir src/examples]
+Dirs=
+Files=risp_example.c
+
+[Dir src/librisp]
+Dirs=
+Files=librisp.c/librisp.h/Makefile
+
+[Dir src/web]
+Dirs=
+Files=index.html
+
+[Project Dir]
+Dirs=admin/docs/src
+Files=
+
+[Project File]
+Name=librisp
+Type=Default

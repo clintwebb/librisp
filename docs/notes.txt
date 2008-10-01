@@ -1,0 +1,16 @@
+This library will provide the low-level interraction for the protocol.  It will not handle the transport, or the events system.  Instead it will merely accumulate the data from a handle, and then fire off data to call-back functions when it has enough.
+
+
+Parameter types
+
+0 to 31			No param
+32 to 63		1 byte param
+64 to 95		2 byte param
+96 to 127		4 byte param
+128 to 159	1 byte length + data
+160 to 191	2 byte length + data
+192 to 223	4 byte length + data
+
+224	to 255	4 byte length + data [ reserved ]
+
+
