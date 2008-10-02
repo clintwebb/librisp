@@ -11,6 +11,10 @@ typedef struct {
 	int handle;
 	char *buffer;
 	int length;
+	
+	char url[256];
+	int ttl;
+
 } node_t;
 
 
@@ -20,44 +24,42 @@ typedef struct {
 #define CMD_TTL     32
 #define CMD_URL			128
 
-static char url[256];
-static int ttl = 0;
 
 void cmdClear(void *base) 
 {
-	assert(base != NULL);
-	if (url != NULL) { url[0] = '\0'; }
-	ttl = 0;
-	
-// 	printf("Clear!\n");
+	node_t *ptr = (node_t *) base;
+	assert(ptr != NULL);
+	ptr->url[0] = '\0';
+	ptr->ttl = 0;
 }
 
 void cmdExecute(void *base) 
 {
-	assert(base != NULL);
-//  	printf("Execute!  (url: '%s', ttl: %d)\n", url, ttl);
+	node_t *ptr = (node_t *) base;
+	assert(ptr != NULL);
+//  	printf("Execute!  (url: '%s', ttl: %d)\n", ptr->url, ptr->ttl);
 }
 
 void cmdURL(void *base, risp_length_t length, risp_char_t *data) 
 {
+	node_t *ptr = (node_t *) base;
+	
 	assert(base != NULL);
 	assert(length >= 0);
 	assert(data != NULL);
 	assert(length < 256);
 
-/*	if (url != NULL) { free(url); }
-	url = malloc(length + 1);*/
-	memcpy(url, data, length);
-	url[length] = '\0';
-// 	printf("Store URL: '%s'\n", url);
+	memcpy(ptr->url, data, length);
+	ptr->url[length] = '\0';
 }
 
 void cmdTtl(void *base, risp_int_t value) 
 {
+	node_t *ptr = (node_t *) base;
 	assert(base != NULL);
 	assert(value >= 0 && value < 256);
 	
-	ttl = value;
+	ptr->ttl = value;
 }
 
 int main(void)
@@ -83,6 +85,9 @@ int main(void)
 		risp_add_command(risp, CMD_EXECUTE, &cmdExecute);
 		risp_add_command(risp, CMD_TTL,     &cmdTtl);
 		risp_add_command(risp, CMD_URL, 		&cmdURL);
+		
+		// clear our base out... just to be sure.
+		cmdClear(&node);
 		
 		// build the operation that we want to send.	
 		buff[0] = CMD_CLEAR;
