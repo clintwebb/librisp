@@ -3,69 +3,117 @@
 #include <risp.h>
 #include <stdio.h>
 #include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+
+
+typedef struct {
+	int handle;
+	char *buffer;
+	int length;
+} node_t;
 
 
 #define CMD_NOP			0
 #define CMD_CLEAR		1
 #define CMD_EXECUTE	2
+#define CMD_TTL     32
 #define CMD_URL			128
 
-static char *url = NULL;
+static char url[256];
+static int ttl = 0;
 
-
-void cmdClear(int handle, risp_length_t length, risp_char_t *data) 
+void cmdClear(void *base) 
 {
-	assert(handle >= 0 && length == 0 && data == NULL);
-	if (url != NULL) { free(url); url = NULL; }
-	printf("Clear!\n");
+	assert(base != NULL);
+	if (url != NULL) { url[0] = '\0'; }
+	ttl = 0;
+	
+// 	printf("Clear!\n");
 }
 
-void cmdExecute(int handle, risp_length_t length, risp_char_t *data) 
+void cmdExecute(void *base) 
 {
-	assert(handle >= 0 && length == 0 && data == NULL);
-	printf("Execute!  (url: '%s')\n", url?url:"");
+	assert(base != NULL);
+//  	printf("Execute!  (url: '%s', ttl: %d)\n", url, ttl);
 }
 
-void cmdURL(int handle, risp_length_t length, risp_char_t *data) 
+void cmdURL(void *base, risp_length_t length, risp_char_t *data) 
 {
-	assert(handle >= 0);
+	assert(base != NULL);
 	assert(length >= 0);
 	assert(data != NULL);
+	assert(length < 256);
 
-	if (url != NULL) { free(url); }
-	url = malloc(length + 1);
+/*	if (url != NULL) { free(url); }
+	url = malloc(length + 1);*/
 	memcpy(url, data, length);
 	url[length] = '\0';
-	printf("Store URL: '%s'\n", url);
+// 	printf("Store URL: '%s'\n", url);
 }
 
+void cmdTtl(void *base, risp_int_t value) 
+{
+	assert(base != NULL);
+	assert(value >= 0 && value < 256);
+	
+	ttl = value;
+}
 
 int main(void)
 {
 	risp_t *risp;
 	char buff[20];
+	risp_length_t leftover;
+	int count, j;
+
+	node_t node;
+
+	node.handle = 0;
+	node.buffer = NULL;
+	node.length = 0;
 
 	// get an initialised risp structure.
 	risp = risp_init();
-
-	risp_add_command(CMD_CLEAR, &cmdClear);
-	risp_add_command(CMD_EXECUTE, &cmdExecute);
-	risp_add_command(CMD_URL, &cmdURL);
-
-	buff[0] = CMD_CLEAR;
-	buff[1] = CMD_URL;
-	buff[2] = 4;
-	strcpy(&buff[3], "http");
-	buff[7] = CMD_EXECUTE;
-	buff[8] = CMD_CLEAR;
-	risp_data(0, 8. buff);
-
-	// indicate that we are not getting any more data for this handle.
-	risp_cleanup(0);
-
-	// clean up the risp structure.
-	risp_shutdown(risp);
-
+	if (risp == NULL) {
+		printf("Unable to initialise RISP library.\n");
+	}
+	else {
+		risp_add_command(risp, CMD_CLEAR, 	&cmdClear);
+		risp_add_command(risp, CMD_EXECUTE, &cmdExecute);
+		risp_add_command(risp, CMD_TTL,     &cmdTtl);
+		risp_add_command(risp, CMD_URL, 		&cmdURL);
+		
+		// build the operation that we want to send.	
+		buff[0] = CMD_CLEAR;
+		buff[1] = CMD_URL;
+		buff[2] = 4;
+		buff[3] = 'h';
+		buff[4] = 't';
+		buff[5] = 't';
+		buff[6] = 'p';
+		buff[7] = CMD_TTL;
+		buff[8] = (unsigned char) 15;
+		buff[9] = CMD_EXECUTE;
+		buff[10] = CMD_TTL;
+		buff[11] = (unsigned char) 30;
+		buff[12] = CMD_EXECUTE;
+		buff[13] = CMD_CLEAR;
+		buff[14] = CMD_EXECUTE;
+		buff[15] = CMD_CLEAR;
+		
+		// and process it a lot of time.
+ 		for(j=0; j<10000000; j++) {
+			leftover = risp_process(risp, &node, 16, buff);
+ 		}
+		
+		printf("finished processing.  left:%d\n", leftover);
+ 		assert(leftover == 0);
+	
+		// clean up the risp structure.
+		risp_shutdown(risp);
+	}
+	
 	return 0;
 }
 

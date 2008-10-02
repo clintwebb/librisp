@@ -15,6 +15,12 @@ librisp.a: librisp.o
 	ar -r $@
 	ar -r $@ $^
 
+install: librisp.a librisp.h
+	cp librisp.h /usr/include/
+	cp librisp.a /usr/lib/
+	@-test ! -e /usr/include/risp.h && ln -s /usr/include/librisp.h /usr/include/risp.h
+	@echo "Install complete."
+
 clean:
 	@-[ -e librisp.o ] && rm librisp.o
 	@-[ -e librisp.a ] && rm librisp.a

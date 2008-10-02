@@ -16,7 +16,7 @@ Files=risp.html
 
 [Dir src/examples]
 Dirs=
-Files=risp_example.c
+Files=risp_example.c/func.c
 
 [Dir src/librisp]
 Dirs=

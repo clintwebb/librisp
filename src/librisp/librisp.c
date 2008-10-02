@@ -16,29 +16,25 @@
 #error Command can only be 1 byte.
 #endif
 
-#if (sizeof(risp_char_t) != 1)
-#error make sure our risp_char_t type is actually 1 byte.  Not sure what would happen if it was more than one.
-#endif
 
-// pre-declare our internal functions
-static risp_length_t risp_process(risp_t *risp, int handle, risp_length_t len, risp_char_t *data);
 
 
 //-----------------------------------------------------------------------------
-// Initialise everything we need to initialise.
+// Initialise everything we need to initialise.   This will return a pointer to 
+// a risp_t structure that has been allocated and initialised.
 risp_t *risp_init(void)
 {
 	risp_t *risp;
 
+	// if our risp_char_t type is not actually 1 byte, not sure what would happen.
+	assert(sizeof(risp_char_t) == 1);
+
 	// allocate memory for the main struct.
 	risp = (risp_t *) malloc(sizeof(risp_t));
-	assert(risp != NULL;
-	
-	risp->commands = (void **) malloc(RISP_MAX_USER_CMD*sizeof(void *));
-	risp->buffer = NULL;
-	risp->buffer_count = 0;
-	
-	memset(risp->commands, 0, RISP_MAX_USER_CMD*sizeof(void *));
+	assert(risp != NULL);
+	if (risp != NULL) {
+		memset(risp->commands, 0, (RISP_MAX_USER_CMD*sizeof(void *)));
+	}
 	
 	return(risp);
 }
@@ -46,102 +42,68 @@ risp_t *risp_init(void)
 
 
 //-----------------------------------------------------------------------------
-// Clean up the buffers that were created by the library.  In otherwords, 
-// prepare for an orderly shutdown of the application.
+// Clean up the structure that were created by the library.  
 risp_result_t risp_shutdown(risp_t *risp)
 {
 	assert(risp != NULL);
-	free(risp);
+	memset(risp->commands, 0, (RISP_MAX_USER_CMD*sizeof(void *)));
 	return(SUCCESS);
 }
 
 
 //-----------------------------------------------------------------------------
 // Add a command to our tables.  Since we are using an array of function 
-// pointers, all the functions need to be of the same type, which makes it a 
-// bit cumbersome for some... 
-risp_result_t risp_add_command(risp_t *risp, risp_command_t command, void (*callback)(void *base, risp_length_t length, risp_char_t *data)) 
+// pointers, risp does not know definitively that the function specified 
+// expects the correct parameters.  If the callback function is not the correct 
+// type for the command-style, then it will generally end up with a segfault.
+risp_result_t risp_add_command(risp_t *risp, risp_command_t command, void *callback) 
 {
 	assert(risp != NULL);
-	
-	// make sure that it is not one of the reserved commands;
 	assert(command > 0);
 	assert(command < RISP_MAX_USER_CMD);
+	assert(callback != NULL);
+	
+	assert(risp->commands != NULL);
+	assert(risp->commands[command] == NULL);
 	
 	if (risp->commands[command] == NULL) {
 		risp->commands[command] = callback;
 		return(SUCCESS);
 	}
 	else {
-		assert(risp->commands[command] == NULL);
 		return(FAILED);
 	}	
 }
 
-//-----------------------------------------------------------------------------
-// Add and process data.  Data will be added to any existing data that was not 
-// able to be processed.
-risp_length_t risp_process(risp_t *risp, void *base, risp_length_t length, risp_char_t *data)
-{
-	risp_length_t leftover;
-
-	assert(risp != NULL);
-	assert(length > 0);
-	assert(data != NULL);
-	
-		leftover = risp_process(handle, length, data);
-		assert(leftover <= length);
-		
-		if (leftover > 0) {
-			_risp_buffer = (void *) malloc(leftover);
-			assert(_risp_buffer != NULL);
-			memcpy(_risp_buffer, &data[length-leftover], leftover);
-			_risp_buffer_len = leftover;
-		}
-	}	
-
-	return(leftover);
-}
-
 
 
 //-----------------------------------------------------------------------------
-// Commands can be packed in other commands (compressed or authorised 
-// operations for example).   We need to expand and process those commands 
-// before continuing the existing incoming stream.
-risp_length_t risp_expand(int handle, risp_length_t len, risp_char_t *data)
+// Process all the commands in the data buffer.  If we dont have enough data to 
+// complete the operation, then we return the number of bytes that we did not 
+// process.  The calling function can then figure out what to do with it.
+risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, risp_char_t *data)
 {
-	assert(handle > 0);
-	assert(len > 0);
-	assert(data != NULL);
-
-	return(FAILED);
-}
-
-
-//-----------------------------------------------------------------------------
-// Process all the commands in the data buffer.  If we didn't have enough data 
-// to complete the operation, then we return the number of bytes that we did 
-// not process.  The calling function can then figure out what to do with it.
-static risp_length_t risp_process(int handle, risp_length_t len, risp_char_t *data)
-{
-	risp_length_t index, left, length;
+	risp_length_t left, length;
 	risp_char_t *ptr;
 	risp_char_t cmd, style;
-	risp_page_t page;
-	int offset;
-	bool cont = false;
+	risp_int_t value;
+	int cont = 1;
 	
-	assert(handle > 0);
+	// callback function prototypes.
+	void (*func_null)(void *base) = NULL;
+	void (*func_int)(void *base, risp_int_t value) = NULL;
+	void (*func_str)(void *base, risp_length_t length, void *data) = NULL;
+	
+	assert(risp != NULL);
+	assert(risp->commands != NULL);
 	assert(len > 0);
 	assert(data != NULL);
 	
-	index = 0;
 	left = len;
 	ptr = data;
-	page = 0;
 	
-	while(cont != false) {
+	while(cont != 0 && left > 0) {
+	
 		// get the command.
 		cmd = *ptr;
 		
@@ -149,28 +111,129 @@ static risp_length_t risp_process(int handle, risp_length_t len, risp_char_t *da
 		style = cmd >> 5;
 		assert(style >= 0 && style <= 7);
 		
+		// NOTE: Even though we could check outside the switch to see if we have a 
+		//       handler for the command, we still need to increment the pointer, 
+		//       even if we cannot process the command.  So it will execute only 
+		//       if there is a handler, but otherwise will be processed.
+		
 		switch(style) {
 			case 0:
 				// 0 to 31			No param
-				assert(page < _risp_max_pages);
-				offset = (page * RISP_MAX_USER_CMD) + cmd;
-				_risp_pages[offset]( int handle, 0, NULL);
+				if (risp->commands[cmd] != NULL) {
+					func_null = risp->commands[cmd];
+					(*func_null)(base);
+				}
+				ptr++;
+				left--;
 				break;
 				
-// 32 to 63		1 byte param
-// 64 to 95		2 byte param
-// 96 to 127		4 byte param
-// 128 to 159	1 byte length + data
-// 160 to 191	2 byte length + data
-// 192 to 223	4 byte length + data
+			case 1:
+				// 32 to 63		1 byte param
+				if (left > 1) {
+					if (risp->commands[cmd] != NULL) {
+						func_int = risp->commands[cmd];
+						value = (unsigned char) ptr[1];
+						(*func_int)(base, value);
+					}
+					ptr += 2;
+					left -= 2;
+				}
+				else { cont = 0; }
+				break;
+				
+			case 2:
+				// 64 to 95		2 byte param
+				if (left > 2) {
+					if (risp->commands[cmd] != NULL) {
+						func_int = risp->commands[cmd];
+						value = ((unsigned char) ptr[1] << 8) + 
+									  ((unsigned char) ptr[2]);
+						(*func_int)(base, value);
+					}
+					ptr += 3;
+					left -= 3;
+				}
+				else { cont = 0; }
+				break;
+				
+			case 3:
+				// 96 to 127		4 byte param
+				if (left > 4) {
+					if (risp->commands[cmd] != NULL) {
+						func_int = risp->commands[cmd];
+						value = ((unsigned char) ptr[1] << 24) +
+										((unsigned char) ptr[2] << 16) +
+										((unsigned char) ptr[3] << 8) +
+										((unsigned char) ptr[4]);
+						(*func_int)(base, value);
+					}
+					ptr += 5;
+					left -= 5;
+				}
+				else { cont = 0; }
+				break;
 
-// 224	to 255	4 byte length + data [ reserved ]
-
+			case 4:
+				// 128 to 159	1 byte length + data
+				if (left > 1) {
+					length = ptr[1];
+					if (left > 1 + length) {
+						if (risp->commands[cmd] != NULL) {
+							func_str = risp->commands[cmd];
+							(*func_str)(base, length, ptr+2);
+						}
+						ptr += (2 + length);
+						left -= (2 + length);
+					}
+					else { cont = 0; }
+				}
+				else { cont = 0; }
+				break;
+				
+			case 5:
+				// 160 to 191	2 byte length + data
+				if (left > 2) {
+					length = ((unsigned char) ptr[1] << 8) + 
+								   ((unsigned char) ptr[2]);
+					if (left > 2 + length) {
+						if (risp->commands[cmd] != NULL) {
+							func_str = risp->commands[cmd];
+							(*func_str)(base, length, ptr+3);
+						}
+						ptr += (3 + length);
+						left -= (3 + length);
+					}
+					else { cont = 0; }
+				}
+				else { cont = 0; }
+				break;
+				
+			case 6:
+			case 7:
+				// 192 to 223	4 byte length + data
+				if (left > 4) {
+					length = ((unsigned char) ptr[1] << 24) +
+									 ((unsigned char) ptr[2] << 16) +
+									 ((unsigned char) ptr[3] << 8) +
+									 ((unsigned char) ptr[4]);
+					if (left > 4 + length) {
+						if (risp->commands[cmd] != NULL) {
+							func_str = risp->commands[cmd];
+							(*func_str)(base, length, ptr+5);
+						}
+						ptr += (5 + length);
+						left -= (5 + length);
+					}
+					else { cont = 0; }
+				}
+				else { cont = 0; }
+				break;
+				
+				
+			default:
+				assert(1);
+				break;
 		}	
-		// if we still have enough data to begin processing the command, then we call the callback
-		
-		// increment the pointer.
-		
 	}	
 	
 	return(left);

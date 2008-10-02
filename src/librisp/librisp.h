@@ -17,6 +17,7 @@
 
 typedef unsigned short int risp_command_t;
 typedef unsigned int       risp_length_t;
+typedef int                risp_int_t;
 typedef unsigned char      risp_char_t;
 typedef enum { 
 	SUCCESS,
@@ -36,7 +37,7 @@ risp_t *risp_init(void);
 risp_result_t risp_shutdown(risp_t *risp);
 
 // setup of callback commands
-risp_result_t risp_add_command(risp_t *risp, risp_command_t command, void (*callback)(void *base, risp_length_t length, risp_char_t *data));
+risp_result_t risp_add_command(risp_t *risp, risp_command_t command, void *callback);
 
 // providing data that needs to be processed and sent to the callback commands.
 risp_length_t risp_process(risp_t *risp, void *base, risp_length_t length, risp_char_t *data);
