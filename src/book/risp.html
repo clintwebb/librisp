@@ -7,14 +7,13 @@
 <h1>Introduction</h1>
 <p>RISP is a binary protocol that is designed to be flexible and fast to process.  It is different to a structure-based protocol in several key ways, and is instead made up of simplistic commands that have known simplistic parameters.</p>
 
-<h1>What does librisp do?</h1>
-<p>Librisp handles the low-level handling of the protocol.  A callback routine will need to be supplied, when the library is initialised, and the library will process the data stream and call the callback routines for each command received.</p>
 
-<h1>The Low level protocol</h1>
-<p>The protocol is based on a signle-byte command.  The 3 highest bits indicate what kind of parameter the command expects.  The lower 5 bits are the unique command.   However, for simplicity, the command is generally issued as the full byte.</p>
+
+<h2>The Low level protocol</h2>
+<p>The protocol is based on a single-byte command.  The 3 highest bits indicate what kind of parameter the command expects.  The lower 5 bits are the unique command identifier.   However, for simplicity, the command is generally issued as the full byte.</p>
 
 <table>
-<tr><td>Range</td><td>Parameter type</td></tr>
+<thead><tr><td>Range</td><td>Parameter type</td></tr></thead>
 <tr><td>0 to 31</td><td>No param</td></tr>
 <tr><td>32 to 63</td><td>1 byte param</td></tr>
 <tr><td>64 to 95</td><td>2 byte param</td></tr>
@@ -25,21 +24,21 @@
 <tr><td>224 to 255</td><td>4 byte length + data</td></tr>
 </table>
 
-<h1>General Protocol usage</h1>
+<h2>General Protocol usage</h2>
 <p>The low level protocol describes how each command is represented, but you cant do very much with a single command that only takes one parameter.  The idea is that multiple commands are grouped together to perform an <b>operation</b>.  An operation would generally start with a CLEAR command, followed by some other commands, and finally an EXECUTE command.</p>
 <p>Operations are generally not to do anything until an EXECUTE command is received.  In other words, it gathers information, setting variables and flags.  When an EXECUTE command is received, it looks at the values it has received, and processes them accordingly.</p>
 
-<h1>Pipelining operations</h1>
+<h2>Pipelining operations</h2>
 <p>When a CLEAR command is received, it clears all the flags and variables.  However, a CLEAR command is not absolutely required in all instances.  If you have some operations that need to be performed, where you have a dozen variables that will not change between each operation, you can do a CLEAR, set the variables that wont change, set the variables that will change, send an EXECUTE.  For the next operation, you dont send a CLEAR, but instead only the variables that need to be changed and then send another EXECUTE.</p>
 
-<h1>Data padding.</h1>
+<h2>Data padding.</h2>
 <p>Some static structure based protocols are arranged so that the values are stored within word boundaries.  For most instances, developers would not need to bother with this, but under some conditions it is desired.  In that case, these protocols can still be used because a NOP command can be used to pad the commands within an operation.</p>
 
-<h1>Bandwidth penalty</h1>
+<h2>Bandwidth penalty</h2>
 <p>The first comment people make about the concept of this protocol, is normally "doesn't it end up sending more data over the network by having to put the command bytes in there?".   Technically true, but it does not always work out that way.</p>
 <p>This protocol is designed to be treated as a stream, and the parameters are provided without need ot any padding, as is common with static structure based protocols.  For example, a structure based protocol that expects a username, email address and a web address, would need to allocate space for the largest values possible.  Which could mean that the structure is several hundred bytes in length regardless of the actual amount of data needed.  The risp operation would only send the strings as long as they are, which ultimately ends up a lot smaller.</p>
 
-<h1>Performance</h1>
+<h2>Performance</h2>
 <p>At first glance, you might not think so, but the protocol was designed for extremely fast low-level processing.  By using callback functions that are internally represented as an array with the command as the index, we can rapidly handle each command.</p>
 <p>When a data stream is provided for processing, it has a very simple process that it can follow.
   <ul>
@@ -53,14 +52,19 @@
 
 <p>The allure of a structure based protocol is that it could simply be dropped into a structure in the programming language (normally C).  This rarely works as expected though, because the data received will need to be processed before it can safely be applied to a structure.   An int on one system may be a different size than an int on another system, and the bytes may even be represented in a different order.   Elements in a C structure are often moved around or padded so that some types can be within a word boundary.   This means that simple structure based protocols often end up with each peice of the protocol added one peice at a time to the structure before it can be processed, removing the advantage of the structure in the first place.</p>
 
-<h1>Expanded operations</h1>
+<h2>Expanded operations</h2>
 <p></p>
 
-<h1>Compression</h1>
+<h2>Compression</h2>
 <p></p>
 
-<h1>Flexibility</h1>
+<h2>Flexibility</h2>
 <p></p>
+
+
+<h2>What does librisp do?</h2>
+<p>Librisp handles the low-level handling of the protocol.  A callback routine will need to be supplied, when the library is initialised, and the library will process the data stream and call the callback routines for each command received.</p>
+
 
 </body>
 </html>
