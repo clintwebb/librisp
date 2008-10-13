@@ -61,6 +61,39 @@
 <h2>Flexibility</h2>
 <p></p>
 
+<h2>Atomic Operations</h2>
+<p>There may be instances where we want to ensure that all of the data for a sequence of operations has been received before it is processed.   This can be done by wrapping a series of operations inside a packed operation.  Such as:
+  CLEAR
+  USERNAME fred
+  PASSKEY 03847493AAB7237362
+  PAYLOAD [binary data]
+  CHECKSUM 721859e93d2461e44e9ebcf07f99585a
+	EXECUTE
+	
+In this example, the payload binary data merely contains a stream of commands that make up regular operations.   However, the payload will not be processed until the entire lot of it is received an the EXECUTE is performed.
+</p>
+
+<h2>Reliability</h2>
+<p>The high-level protocol design can be enhanced to ensure that the data stream is reliable.  This can be accomplished by making sure that operations begin and end with particular commands, and possibly including a sequence number.</p>
+<p>A very simply set of operations could be:
+	CLEAR
+	TTL 15
+	URL http://rhokz.com/
+	SEARCH
+	EXECUTE
+</p>
+<p>However, there is nothing in that stream to ensure that we arent receiving junk binary data.</p>
+<p>So instead we can ensure that we receive a START and a FINISH command at the the begining and end of the operation.  Such as:
+	CLEAR
+	START
+	TTL 15
+	URL http://rhokz.com/
+	SEARCH
+	FINISH
+	EXECUTE
+</p>
+<p>This adds a little extra structure to the command flow so that it can be detected if the stream is corrupted.  However, we can expand, by ensuring that each message is received in a certain sequence.  We can do this, but having the START and FINISH commands have an integer parameter.</p>
+
 
 <h2>What does librisp do?</h2>
 <p>Librisp handles the low-level handling of the protocol.  A callback routine will need to be supplied, when the library is initialised, and the library will process the data stream and call the callback routines for each command received.</p>

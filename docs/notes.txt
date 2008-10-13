@@ -14,3 +14,27 @@ Parameter types
 224	to 255	4 byte length + data [ reserved ]
 
 
+
+-------------------------------------------------------------------------------
+Advanced Protocol Handling.
+
+To improve performance, an advanced processing system can be used.  The standard method is to provide pointers to callback routines for each command.  This is a good flexible approach, but constantly calling a function for every command recieved adds load to the processor that could be better used processing the commands.
+
+When setting up the protocol handling, information about each expected command is supplied.  The only information required is to indicate which commands are valid, and which command is the EXECUTE command and which is the Clear command (although it will be handled like every other one).
+
+Additionally, we would need a bitmask for each command, of commands that need to be cleared when that command is received.  (This could be how the CLEAR command is setup, or thru a callback).   For example when a SEARCH command is received, we want to clear out the SERVER command data because they conflict.
+
+Rather than a bitmask, it would probably be faster to process an array of commands (delimited by a NOP).
+
+A special structure is created that keeps all this information, and it is passed to the risp library when processing is needed.  This means that the library itself does not keep any information.
+
+This means that the processing becomes more complicated, but hopefully is faster.
+
+The fully-callback oriented system could process about 150mb of data per second, with almost 1 million operations per second being processed.  This new system should be able to do twice that amount of data.
+
+
+-------------------------------------------------------------------------------
+
+
+
+

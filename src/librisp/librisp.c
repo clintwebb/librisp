@@ -33,6 +33,7 @@ risp_t *risp_init(void)
 	risp = (risp_t *) malloc(sizeof(risp_t));
 	assert(risp != NULL);
 	if (risp != NULL) {
+		risp->invalid = NULL;
 		memset(risp->commands, 0, (RISP_MAX_USER_CMD*sizeof(void *)));
 	}
 	
@@ -78,11 +79,30 @@ risp_result_t risp_add_command(risp_t *risp, risp_command_t command, void *callb
 
 
 //-----------------------------------------------------------------------------
+// Add a command to our tables.  Since we are using an array of function 
+// pointers, risp does not know definitively that the function specified 
+// expects the correct parameters.  If the callback function is not the correct 
+// type for the command-style, then it will generally end up with a segfault.
+risp_result_t risp_add_invalid(risp_t *risp, void *callback) 
+{
+	assert(risp != NULL);
+	assert(callback != NULL);
+	
+	assert(risp->invalid == NULL);
+	risp->invalid = callback;
+	return(SUCCESS);
+}
+
+
+
+
+//-----------------------------------------------------------------------------
 // Process all the commands in the data buffer.  If we dont have enough data to 
 // complete the operation, then we return the number of bytes that we did not 
 // process.  The calling function can then figure out what to do with it.
 risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, risp_char_t *data)
 {
+	risp_length_t processed;
 	risp_length_t left, length;
 	risp_char_t *ptr;
 	risp_char_t cmd, style;
@@ -93,6 +113,8 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, risp_cha
 	void (*func_null)(void *base) = NULL;
 	void (*func_int)(void *base, risp_int_t value) = NULL;
 	void (*func_str)(void *base, risp_length_t length, void *data) = NULL;
+	void (*func_inv)(void *base, void *data) = risp->invalid;
+	
 	
 	assert(risp != NULL);
 	assert(risp->commands != NULL);
@@ -101,6 +123,7 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, risp_cha
 	
 	left = len;
 	ptr = data;
+	processed = 0;
 	
 	while(cont != 0 && left > 0) {
 	
@@ -123,6 +146,7 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, risp_cha
 					func_null = risp->commands[cmd];
 					(*func_null)(base);
 				}
+				else if (func_inv != NULL) (*func_inv)(base, ptr);
 				ptr++;
 				left--;
 				break;
@@ -135,6 +159,7 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, risp_cha
 						value = (unsigned char) ptr[1];
 						(*func_int)(base, value);
 					}
+					else if (func_inv != NULL) (*func_inv)(base, ptr);
 					ptr += 2;
 					left -= 2;
 				}
@@ -150,6 +175,7 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, risp_cha
 									  ((unsigned char) ptr[2]);
 						(*func_int)(base, value);
 					}
+					else if (func_inv != NULL) (*func_inv)(base, ptr);
 					ptr += 3;
 					left -= 3;
 				}
@@ -167,6 +193,7 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, risp_cha
 										((unsigned char) ptr[4]);
 						(*func_int)(base, value);
 					}
+					else if (func_inv != NULL) (*func_inv)(base, ptr);
 					ptr += 5;
 					left -= 5;
 				}
@@ -182,6 +209,7 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, risp_cha
 							func_str = risp->commands[cmd];
 							(*func_str)(base, length, ptr+2);
 						}
+						else if (func_inv != NULL) (*func_inv)(base, ptr); 
 						ptr += (2 + length);
 						left -= (2 + length);
 					}
@@ -200,6 +228,7 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, risp_cha
 							func_str = risp->commands[cmd];
 							(*func_str)(base, length, ptr+3);
 						}
+						else if (func_inv != NULL) (*func_inv)(base, ptr);
 						ptr += (3 + length);
 						left -= (3 + length);
 					}
@@ -221,6 +250,7 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, risp_cha
 							func_str = risp->commands[cmd];
 							(*func_str)(base, length, ptr+5);
 						}
+						else if (func_inv != NULL) (*func_inv)(base, ptr); 
 						ptr += (5 + length);
 						left -= (5 + length);
 					}
@@ -236,5 +266,9 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, risp_cha
 		}	
 	}	
 	
-	return(left);
+	assert(left <= len);
+	assert(left >= 0);
+	
+	processed = len - left;
+	return(processed);
 }
