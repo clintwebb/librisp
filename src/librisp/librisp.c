@@ -1,11 +1,11 @@
 //-----------------------------------------------------------------------------
 // librisp
-// see librisp.h for details.
+// see risp.h for details.
 //-----------------------------------------------------------------------------
 
 
 
-#include "librisp.h"
+#include "risp.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -13,7 +13,7 @@
 
 
 #if (RISP_MAX_USER_CMD > 256)
-#error Command can only be 1 byte.
+#error "Command can only be 1 byte."
 #endif
 
 
@@ -102,7 +102,6 @@ risp_result_t risp_add_invalid(risp_t *risp, void *callback)
 // process.  The calling function can then figure out what to do with it.
 risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, risp_char_t *data)
 {
-	risp_length_t processed;
 	risp_length_t left, length;
 	risp_char_t *ptr;
 	risp_char_t cmd, style;
@@ -110,106 +109,98 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, risp_cha
 	int cont = 1;
 	
 	// callback function prototypes.
-	void (*func_null)(void *base) = NULL;
+	void (*func_nul)(void *base) = NULL;
 	void (*func_int)(void *base, risp_int_t value) = NULL;
 	void (*func_str)(void *base, risp_length_t length, void *data) = NULL;
-	void (*func_inv)(void *base, void *data) = risp->invalid;
+	void (*func_inv)(void *base, void *data, int length) = risp->invalid;
 	
 	
-	assert(risp != NULL);
-	assert(risp->commands != NULL);
-	assert(len > 0);
-	assert(data != NULL);
+// 	assert(risp != NULL);
+// 	assert(risp->commands != NULL);
+// 	assert(len > 0);
+// 	assert(data != NULL);
 	
 	left = len;
 	ptr = data;
-	processed = 0;
 	
 	while(cont != 0 && left > 0) {
 	
-		// get the command.
-		cmd = *ptr;
-		
-		// determine the type (bitshift by 5 bits to the right)
-		style = cmd >> 5;
-		assert(style >= 0 && style <= 7);
-		
-		// NOTE: Even though we could check outside the switch to see if we have a 
+		// NOTE: Even though we could check outside the switch to see if we have a
 		//       handler for the command, we still need to increment the pointer, 
 		//       even if we cannot process the command.  So it will execute only 
 		//       if there is a handler, but otherwise will be processed.
 		
+		cmd = *ptr;
+		style = cmd >> 5;
 		switch(style) {
 			case 0:
-				// 0 to 31			No param
-				if (risp->commands[cmd] != NULL) {
-					func_null = risp->commands[cmd];
-					(*func_null)(base);
-				}
-				else if (func_inv != NULL) (*func_inv)(base, ptr);
+			case 1:
+				// 0 to 63			No param
+				
+				func_nul = risp->commands[cmd];
+				if (func_nul) 		 (*func_nul)(base);
+				else if (func_inv) (*func_inv)(base, ptr, left);
 				ptr++;
 				left--;
 				break;
 				
-			case 1:
-				// 32 to 63		1 byte param
+			case 2:
+				// 64 to 95		1 byte param
 				if (left > 1) {
-					if (risp->commands[cmd] != NULL) {
-						func_int = risp->commands[cmd];
+					func_int = risp->commands[cmd];
+					if (func_int) {
 						value = (unsigned char) ptr[1];
 						(*func_int)(base, value);
 					}
-					else if (func_inv != NULL) (*func_inv)(base, ptr);
+					else if (func_inv) (*func_inv)(base, ptr, left);
 					ptr += 2;
 					left -= 2;
 				}
 				else { cont = 0; }
 				break;
 				
-			case 2:
-				// 64 to 95		2 byte param
+			case 3:
+				// 96 to 127		2 byte param
 				if (left > 2) {
-					if (risp->commands[cmd] != NULL) {
-						func_int = risp->commands[cmd];
+					func_int = risp->commands[cmd];
+					if (func_int) {
 						value = ((unsigned char) ptr[1] << 8) + 
 									  ((unsigned char) ptr[2]);
 						(*func_int)(base, value);
 					}
-					else if (func_inv != NULL) (*func_inv)(base, ptr);
+					else if (func_inv) (*func_inv)(base, ptr, left);
 					ptr += 3;
 					left -= 3;
 				}
 				else { cont = 0; }
 				break;
 				
-			case 3:
-				// 96 to 127		4 byte param
+			case 4:
+				// 128 to 159		4 byte param
 				if (left > 4) {
-					if (risp->commands[cmd] != NULL) {
-						func_int = risp->commands[cmd];
+					func_int = risp->commands[cmd];
+					if (func_int) {
 						value = ((unsigned char) ptr[1] << 24) +
 										((unsigned char) ptr[2] << 16) +
 										((unsigned char) ptr[3] << 8) +
 										((unsigned char) ptr[4]);
 						(*func_int)(base, value);
 					}
-					else if (func_inv != NULL) (*func_inv)(base, ptr);
+					else if (func_inv) (*func_inv)(base, ptr, left);
 					ptr += 5;
 					left -= 5;
 				}
 				else { cont = 0; }
 				break;
 
-			case 4:
-				// 128 to 159	1 byte length + data
+			case 5:
+				// 160 to 191	 1 byte length + data
 				if (left > 1) {
 					length = ptr[1];
 					if (left > 1 + length) {
-						if (risp->commands[cmd] != NULL) {
-							func_str = risp->commands[cmd];
-							(*func_str)(base, length, ptr+2);
-						}
-						else if (func_inv != NULL) (*func_inv)(base, ptr); 
+						func_str = risp->commands[cmd];
+						if (func_str) 		 (*func_str)(base, length, ptr+2);
+						else if (func_inv) (*func_inv)(base, ptr, left);
 						ptr += (2 + length);
 						left -= (2 + length);
 					}
@@ -218,17 +209,15 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, risp_cha
 				else { cont = 0; }
 				break;
 				
-			case 5:
-				// 160 to 191	2 byte length + data
+			case 6:
+				// 192 to 223	 2 byte length + data
 				if (left > 2) {
 					length = ((unsigned char) ptr[1] << 8) + 
 								   ((unsigned char) ptr[2]);
 					if (left > 2 + length) {
-						if (risp->commands[cmd] != NULL) {
-							func_str = risp->commands[cmd];
-							(*func_str)(base, length, ptr+3);
-						}
-						else if (func_inv != NULL) (*func_inv)(base, ptr);
+						func_str = risp->commands[cmd];
+						if (func_str)      (*func_str)(base, length, ptr+3);
+						else if (func_inv) (*func_inv)(base, ptr, left);
 						ptr += (3 + length);
 						left -= (3 + length);
 					}
@@ -237,20 +226,17 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, risp_cha
 				else { cont = 0; }
 				break;
 				
-			case 6:
 			case 7:
-				// 192 to 223	4 byte length + data
+				// 224 to 255 	4 byte length + data
 				if (left > 4) {
 					length = ((unsigned char) ptr[1] << 24) +
 									 ((unsigned char) ptr[2] << 16) +
 									 ((unsigned char) ptr[3] << 8) +
 									 ((unsigned char) ptr[4]);
 					if (left > 4 + length) {
-						if (risp->commands[cmd] != NULL) {
-							func_str = risp->commands[cmd];
-							(*func_str)(base, length, ptr+5);
-						}
-						else if (func_inv != NULL) (*func_inv)(base, ptr); 
+						func_str = risp->commands[cmd];
+						if (func_str) 	   (*func_str)(base, length, ptr+5);
+						else if (func_inv) (*func_inv)(base, ptr, left);
 						ptr += (5 + length);
 						left -= (5 + length);
 					}
@@ -266,9 +252,9 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, risp_cha
 		}	
 	}	
 	
-	assert(left <= len);
-	assert(left >= 0);
-	
-	processed = len - left;
-	return(processed);
+// 	assert(left <= len);
+// 	assert(left >= 0);
+	assert(len - left >= 0);	
+
+	return(len - left);
 }

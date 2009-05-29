@@ -15,7 +15,7 @@
 ///////////////////////////////////////////
 // create the types that we will be using.
 
-typedef unsigned short int risp_command_t;
+typedef unsigned char      risp_command_t;
 typedef unsigned int       risp_length_t;
 typedef int                risp_int_t;
 typedef unsigned char      risp_char_t;

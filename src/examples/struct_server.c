@@ -21,14 +21,13 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <risp.h>
 
 #include "daemon.h"
-#include "risp_server_prot.h"
+#include "struct_prot.h"
 
 
 
-#define PACKAGE						"risp_server"
+#define PACKAGE						"struct_server"
 #define VERSION						"1.0"
 
 
@@ -66,7 +65,6 @@ typedef struct {
 typedef struct {
 	unsigned int out_bytes;
 	unsigned int in_bytes;
-	unsigned int commands;
 	unsigned int operations;
 	unsigned int maxbuf;
 	unsigned int meml;
@@ -85,7 +83,6 @@ typedef struct {
 	unsigned int in_buffer_max, out_buffer_max;
 	
 	stats_t *stats;
-	risp_t  *risp;
 	
 	// the variables and flags that represent the data received from commands.
 	char url[256];
@@ -103,7 +100,6 @@ typedef struct {
   struct event       event;				
   bool               verbose;
   stats_t           *stats;
-	risp_t            *risp;
   void              *next;
 } server_t;
 
@@ -229,97 +225,48 @@ void ignore_sigpipe(void) {
 
 
 
-
-void cmdNop(void *base) 
+void cmdSearch(cmd_search_t *data, node_t *ptr) 
 {
-	node_t *ptr = (node_t *) base;
-	ptr->stats->commands ++;
-}
-
-void cmdInvalid(void *base, void *data)
-{
-	// this callback is called if we have an invalid command.  We shouldn't be receiving any invalid commands.
-	unsigned char *cast;
-	cast = (unsigned char *) data;
-	printf("Received invalid: [%d, %d, %d]\n", cast[0], cast[1], cast[2]);
-	assert(0);
-}
-
-// This callback function is to be fired when the CMD_CLEAR command is 
-// received.  It should clear off any data received and stored in variables 
-// and flags.  In otherwords, after this is executed, the node structure 
-// should be in a predictable state.
-void cmdClear(void *base) 
-{
-	// The base pointer that is passed thru the library doesnt know about the 
-	// node structure we are using, so we need to make a cast-pointer for it.
- 	node_t *ptr = (node_t *) base;
-	
-	// Always a good idea to put lots of asserts in your code.  It helps to 
-	// capture developer mistakes that would sometimes be difficult to catch at 
-	// a later date.
-//  	assert(ptr != NULL);
-	
-	// Now we clear off our protocol specific variables and flags.
-	ptr->url[0] = '\0';
-	ptr->ttl = 0;
-	
-//  	assert(ptr->stats != NULL);
-	ptr->stats->commands ++;
-}
-
-
-// This callback function is called when the CMD_EXECUTE command is received.  
-// It should look at the data received so far, and figure out what operation 
-// needs to be done on that data.  Since this is a simulation, and our 
-// protocol doesn't really do anything useful, we will not really do much in 
-// this example.   
-void cmdExecute(void *base) 
-{
-	node_t *ptr = (node_t *) base;
-//  	assert(ptr != NULL);
-	
-//  	assert(ptr->stats != NULL);
+	assert(data->cmd == CMD_SEARCH);
 	ptr->stats->operations ++;
-	ptr->stats->commands ++;
-
-	// All we can do really in this exercise is to print out the values that we have.
-//  	printf("Execute!  (url: '%s', ttl: %d)\n", ptr->url, ptr->ttl);
 }
 
-// This callback function is fired when we receive the CMD_URL command.  We 
-// dont need to actually do anything productive with this, other than storing 
-// the information into some internal variable.
-void cmdURL(void *base, risp_length_t length, risp_char_t *data) 
+
+
+int processdata(node_t *node, int length, unsigned char *ptr)
 {
-	node_t *ptr = (node_t *) base;
+ 	int left = length;
+	int count = 0;
+ 	int stopped = 0;
+	unsigned char *buff;
+
+	buff = ptr;
+ 	while (stopped == 0 && left > 0) {
 	
-	// At every opportunity, we need to make sure that our data is legit.
-// 	assert(base != NULL);
-// 	assert(length >= 0);
-// 	assert(data != NULL);
-// 	assert(length < 256);
+		// the first byte of any data is always the command.
+		if (*buff == CMD_SEARCH) {
+			if (left >= sizeof(cmd_search_t)) {
+				
+				cmdSearch((cmd_search_t *) buff, node);
+				count += sizeof(cmd_search_t);
+ 				left -= sizeof(cmd_search_t);
+				buff += sizeof(cmd_search_t);
+			}
+ 			else {
+ 				stopped = 1;
+ 			}
+		}
+		else {
+			printf("Invalid command. cmd=%d\n", *buff);
+			printf("length=%d, count=%d, left=%d\n", length, count, left);
+			exit(EXIT_FAILURE);
+		}
+ 	}
 
-	// copy the string that was provides from the stream (which is guaranteed to 
-	// be complete)
-// 	memcpy(ptr->url, data, length);
-// 	ptr->url[length] = '\0';
-
-// 	assert(ptr->stats != NULL);
-	ptr->stats->commands ++;
+	return(count);
 }
 
-void cmdTtl(void *base, risp_int_t value) 
-{
-	node_t *ptr = (node_t *) base;
-// 	assert(base != NULL);
-// 	assert(value >= 0 && value < 256);
-	
-// 	ptr->ttl = value;
-		
-// 	assert(ptr->stats != NULL);
-	ptr->stats->commands ++;
-}
+
 
 
 // used to clear a previously valid node.
@@ -376,7 +323,6 @@ node_t * node_new(void)
 	assert(node);
 		
 	node->stats = NULL;
-	node->risp = NULL;
 
 	node->next = NULL;
 	node->prev = NULL;
@@ -469,7 +415,8 @@ static void node_event_handler(int hid, short flags, void *data)
 // 			assert(node->in_buffer_len > 0);
 			
 			node->stats->cycles ++;
-			res = risp_process(node->risp, node, node->in_buffer_len, node->in_buffer);
+
+			res = processdata(node, node->in_buffer_len, node->in_buffer);
 //  			assert(res <= node->in_buffer_len);
 //  			assert(res >= 0);
 			if (res < node->in_buffer_len) {
@@ -712,7 +659,6 @@ server_t *server_new(int port, int maxconns, char *address)
 	
 	ptr->handle = sfd;
 	ptr->stats = NULL;
-	ptr->risp = NULL;
 	ptr->verbose = false;
 	ptr->next = NULL;
 	
@@ -782,9 +728,6 @@ static void server_event_handler(int hid, short flags, void *data)
 
 		assert(server->stats != NULL);
 		node->stats = server->stats;
-		
-		assert(server->risp != NULL);
-		node->risp = server->risp;
 	}
 	else {
 	
@@ -794,9 +737,6 @@ static void server_event_handler(int hid, short flags, void *data)
 
 			node->handle = sfd;
 			node->active = true;
-			
-			// clear our base out... just to be sure.
-			cmdClear(node);
 		}
 		else {
 			assert(node->handle != sfd);
@@ -888,11 +828,10 @@ static void timeout_handler(const int fd, const short which, void *arg) {
 
 	assert(ptr->stats != NULL);
 	
-	if (ptr->stats->in_bytes || ptr->stats->out_bytes || ptr->stats->commands || ptr->stats->operations) {
-		printf("Bytes [%u/%u], Commands [%u], Operations[%u], Max[%u/%u], Cycles[%u], Undone[%u]\n", ptr->stats->in_bytes, ptr->stats->out_bytes, ptr->stats->commands, ptr->stats->operations, ptr->stats->meml, ptr->stats->maxbuf, ptr->stats->cycles, ptr->stats->undone);
+	if (ptr->stats->in_bytes || ptr->stats->out_bytes || ptr->stats->operations) {
+		printf("Bytes [%u/%u], Operations[%u], Max[%u/%u], Cycles[%u], Undone[%u]\n", ptr->stats->in_bytes, ptr->stats->out_bytes, ptr->stats->operations, ptr->stats->meml, ptr->stats->maxbuf, ptr->stats->cycles, ptr->stats->undone);
 		ptr->stats->in_bytes = 0;
 		ptr->stats->out_bytes = 0;
-		ptr->stats->commands = 0;
 		ptr->stats->operations = 0;
 		ptr->stats->meml = 0;
 		ptr->stats->cycles = 0;
@@ -922,12 +861,11 @@ void timeout_init(timeout_t *ptr, struct event_base *base)
 // sockets and event loop.
 int main(int argc, char **argv) 
 {
-  int c;
+	int c;
 	settings_t     *settings = NULL;
 	server_t       *server   = NULL;
 	timeout_t      *timeout  = NULL;
-  stats_t        *stats    = NULL;
-  risp_t         *risp     = NULL;
+	stats_t        *stats    = NULL;
 
 
 	// handle SIGINT 
@@ -1072,7 +1010,6 @@ int main(int argc, char **argv)
 	stats = (stats_t *) malloc(sizeof(stats_t));
 	stats->out_bytes = 0;
 	stats->in_bytes = 0;
-	stats->commands = 0;
 	stats->operations = 0;
 	stats->maxbuf = 0;
 	stats->meml = 0;
@@ -1080,30 +1017,14 @@ int main(int argc, char **argv)
 	server->stats = stats;
 	timeout->stats = stats;
 
-	// Initialise the risp system.
-	risp = risp_init();
-	assert(risp != NULL);
-	risp_add_invalid(risp, cmdInvalid);
-	risp_add_command(risp, CMD_CLEAR, 	&cmdClear);
-	risp_add_command(risp, CMD_EXECUTE, &cmdExecute);
-	risp_add_command(risp, CMD_TTL,     &cmdTtl);
-	risp_add_command(risp, CMD_URL, 		&cmdURL);
-	
-	assert(server->risp == NULL);
-	server->risp = risp;
-
-
-  // enter the event loop.
-  if (settings->verbose) printf("Starting Event Loop\n\n");
+	// enter the event loop.
+	if (settings->verbose) printf("Starting Event Loop\n\n");
 	event_base_loop(main_event_base, 0);
     
-  // cleanup risp library.
-	risp_shutdown(risp);
-  risp = NULL;
     
 	// cleanup 'server', which should cleanup all the 'nodes'
     
-  if (settings->verbose) printf("\n\nExiting.\n");
+	if (settings->verbose) printf("\n\nExiting.\n");
     
 	// remove the PID file if we're a daemon
 	if (settings->daemonize && settings->pid_file != NULL) {

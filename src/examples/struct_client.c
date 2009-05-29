@@ -13,23 +13,19 @@
 // would expect.  
 
 
-#include <risp.h>
-#include <stdio.h>
+#include <arpa/inet.h>
 #include <assert.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <netdb.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <arpa/inet.h>
-#include <netdb.h>
 #include <unistd.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <string.h>
-#include <assert.h>
-#include <stdio.h>
 
-#include "risp_server_prot.h"
+#include "struct_prot.h"
 
 #define MAX_BUFFER (1024*512)
 #define TEST_STR	240
@@ -55,54 +51,6 @@ typedef struct {
 	int status;
 
 } node_t;
-
-
-
-
-// This callback function is to be fired when the CMD_CLEAR command is 
-// received.  It should clear off any data received and stored in variables 
-// and flags.  In otherwords, after this is executed, the node structure 
-// should be in a predictable state.
-void cmdClear(void *base) 
-{
-	// The base pointer that is passed thru the library doesnt know about the 
-	// node structure we are using, so we need to make a cast-pointer for it.
-	node_t *ptr = (node_t *) base;
-	
-	// Always a good idea to put lots of asserts in your code.  It helps to 
-	// capture developer mistakes that would sometimes be difficult to catch at 
-	// a later date.
-	assert(ptr != NULL);
-	
-	// Now we clear off our protocol specific variables and flags.
-	ptr->status = 0;
-}
-
-
-// This callback function is called when the CMD_EXECUTE command is received.  
-// It should look at the data received so far, and figure out what operation 
-// needs to be done on that data.  Since this is a simulation, and our 
-// protocol doesn't really do anything useful, we will not really do much in 
-// this example.   
-void cmdExecute(void *base) 
-{
-	node_t *ptr = (node_t *) base;
-	assert(ptr != NULL);
-	
-	// All we can do really in this exercise is to print out the values that we have.
-//  	printf("Execute!  (url: '%s', ttl: %d)\n", ptr->url, ptr->ttl);
-}
-
-
-
-void cmdStatus(void *base, risp_int_t value) 
-{
-	node_t *ptr = (node_t *) base;
-	assert(base != NULL);
-	assert(value >= 0 && value < 256);
-	
-	ptr->status = value;
-}
 
 
 
@@ -259,15 +207,16 @@ void sig_handler(const int sig) {
 int main(int argc, char **argv)
 {
 	int c;
-	risp_t *risp;
-	char buff[MAX_BUFFER];
+	cmd_search_t search;
+	unsigned char *buff;
+	unsigned char *ptr;
 	int sent;
 	char *srv = "127.0.0.1";
 	int port = DEFAULT_PORT;
 	int red, blue;
 	int partial;
-	int max;
 	int i;
+	int max;
 
 
 	node_t node;
@@ -294,96 +243,76 @@ int main(int argc, char **argv)
 	}
 
 
-	// get an initialised risp structure.
-	risp = risp_init();
-	if (risp == NULL) {
-		printf("Unable to initialise RISP library.\n");
+	search.cmd = CMD_SEARCH;
+	search.ttl = 14;
+	search.len = TEST_STR;
+
+	max = TEST_MULT * sizeof(search);
+	buff = (unsigned char *) malloc(TEST_MULT * sizeof(search));
+	assert(buff != NULL);
+	ptr = buff;
+	for(i=0; i<TEST_MULT; i++) {
+		memcpy(ptr, &search, sizeof(search));
+		ptr += sizeof(search);
+	}
+
+	// and process it a lot of time.
+	printf("Sending data stream.\n");
+	
+	// connect to the remote socket.
+	node.handle = sock_connect(srv, port);
+	if (node.handle <= 0) {
+		printf("Unable to connect to %s:%d\n", srv, port);
 	}
 	else {
-		risp_add_command(risp, CMD_CLEAR, 	&cmdClear);
-		risp_add_command(risp, CMD_EXECUTE, &cmdExecute);
-		risp_add_command(risp, CMD_STATUS,  &cmdStatus);
+		red = 100;
+		blue = 0;
+		partial = 0;
+		ptr = buff;
+		while (sigtrap == 0) {
 		
-		// build the operation that we want to send.	
-		max = 0;
-		buff[max++] = CMD_CLEAR;
-		buff[max++] = CMD_URL;
-		buff[max++] = (unsigned char) TEST_STR;
-		max += TEST_STR;
-		buff[max++] = CMD_TTL;
-		buff[max++] = (unsigned char) 15;
-		buff[max++] = CMD_EXECUTE;
-		buff[max++] = CMD_URL;
-		buff[max++] = (unsigned char) TEST_STR;
-		max += TEST_STR;
-		buff[max++] = CMD_TTL;
-		buff[max++] = (unsigned char) 30;
-		buff[max++] = CMD_EXECUTE;
-		
-		for( i=0; i<TEST_MULT; i++) {
-			assert((max * 2) <= MAX_BUFFER);
-			memmove(&buff[max], buff, max);
-			max = max + max;
-		}
-		
-		assert(max <= MAX_BUFFER);
-		
-		// and process it a lot of time.
-		printf("Sending data stream.\n");
-		
-		// connect to the remote socket.
-		node.handle = sock_connect(srv, port);
-		if (node.handle <= 0) {
-			printf("Unable to connect to %s:%d\n", srv, port);
-		}
-		else {
-			red = 100;
-			blue = 0;
-			partial = 0;
-			while (sigtrap == 0) {
-			
-				// continue to send data to the socket over and over as quickly as possible.
-				sent = sock_send(node.handle, buff+partial, max-partial);
-				if (sent < 0) { sigtrap ++; }
-				else if (sent == 0) {
-					putchar('@');
-					usleep(FULL_WAIT);
+			// continue to send data to the socket over and over as quickly as possible.
+			sent = sock_send(node.handle, ptr, max-partial);
+			if (sent < 0) { sigtrap ++; }
+			else if (sent == 0) {
+				putchar('@');
+				usleep(FULL_WAIT);
+			}
+			else {
+				assert(sent <= max);
+				if (sent < (max-partial)) {
+					usleep(PART_WAIT);
+					partial += sent;
+					ptr += sent;
+					assert(partial < max);
+					putchar('#');
 				}
 				else {
-					assert(sent <= max);
-					if (sent < (max-partial)) {
-						usleep(PART_WAIT);
-						partial += sent;
-						assert(partial < max);
-						putchar('#');
+					ptr = buff;
+					partial = 0;
+				}
+				
+				red --;
+				if (red == 0) {
+					putchar('.');
+					red = 100;
+					blue++;
+					if (blue == 80) {
+						putchar('\n');
+						blue = 0;
 					}
-					else {
-						partial = 0;
-					}
-					
-					red --;
-					if (red == 0) {
-						putchar('.');
-						red = 100;
-						blue++;
-						if (blue == 80) {
-							putchar('\n');
-							blue = 0;
-						}
-					}
-				}	
-					
-			}
-			
-			// close the socket.
-			if (node.handle >= 0) {
-				close(node.handle);
-			}
+				}
+			}	
+				
 		}
-	
-		// clean up the risp structure.
-		risp_shutdown(risp);
+		
+		// close the socket.
+		if (node.handle >= 0) {
+			close(node.handle);
+		}
 	}
+
+	free(buff);
 	
 	return 0;
 }

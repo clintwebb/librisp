@@ -1,0 +1,12 @@
+one way that we might be able to process more data quickly, is if we have multiple worker threads.  We will not want a 
+lot of threads, and certainly not a 1:1 ratio against the number of sockets we are processing.  But maybe 1 or more 
+worker threads that only process the data in the buffers, and sleep when there are no buffers to process.
+
+To ensure that the worker threads do not cause the network threads to wait, each node object should contain a dual set of 
+buffers.  One that is used for the network thread to add new data, and one for the worker thread that will be processiing 
+it.  Therefore there would only need to be a mutex around the writing to the buffer, and when the worker thread wants to 
+process it, it will move the 'pending' buffer over to the 'processing' buffer.
+
+
+To pause a thread until a condition changes:
+pthread_cond_wait()

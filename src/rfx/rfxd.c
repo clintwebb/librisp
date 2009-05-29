@@ -5,6 +5,13 @@
 //-----------------------------------------------------------------------------
 
 
+#include <risp.h>
+#include <expbuf.h>
+
+#include "bufadd.h"
+#include "daemon.h"
+#include "rfx_prot.h"
+
 // includes
 #include <assert.h>
 #include <errno.h>
@@ -21,25 +28,18 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <risp.h>
-
-#include "daemon.h"
-#include "risp_server_prot.h"
 
 
-
-#define PACKAGE						"risp_server"
+#define PACKAGE						"rfxd"
 #define VERSION						"1.0"
 
 
 // global constants and other things go here.
 #define DEFAULT_MAXCONNS	1024
-#define DEFAULT_MAXBYTES	0
-#define DEFAULT_CHUNKSIZE	(1024*512)
-
 #define INVALID_HANDLE -1
 
-#define OPTIMAL_MAX (1024 * 1024 * 16)
+// start out with an 8kb buffer.  Whenever it is full, we will double the buffer, so this is just a starting point.
+#define DEFAULT_BUFFSIZE	8192
 
 
 /* Get a consistent bool type */
@@ -51,28 +51,34 @@
 
 
 
+static void node_event_handler(int hid, short flags, void *data);
+
+
 
 typedef struct {
 	int port;
 	int maxconns;
-	int maxbytes;
 	bool verbose;
-  bool daemonize;
-  char *username;
-  char *pid_file;
-  char *interface;
+	bool daemonize;
+	char *username;
+	char *pid_file;
+	char *interface;
+	char *storepath;
 } settings_t;
+
 
 typedef struct {
 	unsigned int out_bytes;
 	unsigned int in_bytes;
 	unsigned int commands;
 	unsigned int operations;
-	unsigned int maxbuf;
-	unsigned int meml;
 	unsigned int cycles;
+	unsigned int reads, writes;
 	unsigned int undone;
 } stats_t;
+
+
+
 
 typedef struct {
 	int handle;
@@ -80,18 +86,20 @@ typedef struct {
 	bool active;
 	bool verbose;
 	
-	unsigned char *in_buffer, *out_buffer;
-	unsigned int in_buffer_len, out_buffer_len;
-	unsigned int in_buffer_max, out_buffer_max;
+	expbuf_t in, out;
 	
 	stats_t *stats;
 	risp_t  *risp;
 	
-	// the variables and flags that represent the data received from commands.
-	char url[256];
-	int ttl;
+	data_t data;
 	
-	void *next, *prev;
+	// local file handling stuff.
+	char *storepath;
+	bool sending;
+	int filehandle;
+	unsigned int size;
+	unsigned int offset;
+	expbuf_t filebuf;
 } node_t ;
 
 
@@ -100,26 +108,41 @@ typedef struct {
 	int                active;			// number of active nodes.
 	int                maxconns;		// max number of nodes.
 	node_t           **nodes;				// array of node objects.
-  struct event       event;				
-  bool               verbose;
-  stats_t           *stats;
+	struct event       event;				
+	bool               verbose;
+	stats_t           *stats;
 	risp_t            *risp;
-  void              *next;
+	char              *storepath;
 } server_t;
 
 
 
 typedef struct {
 	struct event       clockevent;
-//	struct event_base *base;
 	server_t          *server;
 	stats_t           *stats;
 } timeout_t;
 
 
 
+void data_clear(data_t *data) {
+	data->op = CMD_NOP;
+	data->size = 0;
+	data->offset = 0;
 
+	expbuf_clear(&data->file);
+	expbuf_clear(&data->data);
+}
 
+// initialise a data structure that is invalid.
+void data_init(data_t *data) {
+	assert(data != NULL);
+	
+	expbuf_init(&data->file, 0);
+	expbuf_init(&data->data, 0);
+
+	data_clear(data);
+}
 
 //-----------------------------------------------------------------------------
 // Global variables.
@@ -184,17 +207,16 @@ int new_socket(struct addrinfo *ai) {
 void usage(void) {
 	printf(PACKAGE " " VERSION "\n");
 	printf("-p <num>      TCP port to listen on (default: %d)\n", DEFAULT_PORT);
-	printf("-l <ip_addr>  interface to listen on, default is INDRR_ANY\n"
-					"-d            run as a daemon\n"
-					"-u <username> assume identity of <username> (only when run as root)\n"
-					"-k <num>      bandwidth limit.\n"
-					"-c <num>      max simultaneous connections, default is 1024\n"
-					"-v            verbose (print errors/warnings while in event loop)\n"
-					"-vv           very verbose (also print client commands/reponses)\n"
-					"-h            print this help and exit\n"
-					"-P <file>     save PID in <file>, only used with -d option\n"
-					);
-	
+	printf("-l <ip_addr>  interface to listen on, default is INDRR_ANY\n");
+	printf("-c <num>      max simultaneous connections, default is 1024\n");
+	printf("-s <path>     storage path\n");
+	printf("\n");
+	printf("-d            run as a daemon\n");
+	printf("-P <file>     save PID in <file>, only used with -d option\n");
+	printf("-u <username> assume identity of <username> (only when run as root)\n");
+	printf("\n");
+	printf("-v            verbose (print errors/warnings while in event loop)\n");
+	printf("-h            print this help and exit\n");
 	return;
 }
 
@@ -221,27 +243,191 @@ void ignore_sigpipe(void) {
 	sa.sa_handler = SIG_IGN;
 	sa.sa_flags = 0;
 	if (sigemptyset(&sa.sa_mask) == -1 || sigaction(SIGPIPE, &sa, 0) == -1) {
-			perror("failed to ignore SIGPIPE; sigaction");
-			exit(EXIT_FAILURE);
+		perror("failed to ignore SIGPIPE; sigaction");
+		exit(EXIT_FAILURE);
+	}
+}
+
+
+
+///----------------------------------------------------------------------------
+
+
+// if we are sending a file to the node, then we need to look at our outgoing buffer to see how much data we can send.
+void sendFileData(node_t *node)
+{
+	int avail, len;
+	int skip;
+
+	assert(node != NULL);
+	assert(node->sending == true);
+	assert(node->filehandle > 0);
+	assert(node->offset > 0);
+	assert(node->size > 0);
+	assert(node->offset < node->size);
+
+	// we must have an outgoing buffer already at this point.
+	assert(node->out.max > 0);
+	assert(node->out.data != NULL);
+	
+	if (node->out.length == 0 && ((node->size-node->offset) > node->filebuf.max) ) {
+		// the out-buffer is empty... so we need to double our read-buffer.
+		assert(node->filebuf.max > 0);
+		avail = node->filebuf.max * 2;
+		expbuf_shrink(&node->filebuf, avail);
+	}
+	else {
+		// the out-buffer is not empty, and we assume that we have space in
+		// it, then we read enough data from the file to fill the outbuffer.
+	
+		avail = node->out.max - node->out.length;
+		skip = (1+5+5);
+		avail -= skip;  // the EXECUTE, DATA, OFFSET
+	}
+	
+	// pull avail bytes from the file...  or the size...
+	if (node->size < avail) { avail = node->size; }
+	assert(avail > 0);
+
+	assert(avail <= node->filebuf.max);
+	len = read(node->filehandle, node->filebuf.data, avail);
+	assert(len > 0);
+	assert(len <= avail);
+	node->filebuf.length = len;
+	
+	addCmdLargeInt(&node->out, CMD_OFFSET, node->offset);
+	addCmdLargeStr(&node->out, CMD_DATA, node->filebuf.length, node->filebuf.data);
+	addCmd(&node->out, CMD_EXECUTE);
+	assert(node->out.length <= node->out.max);
+	
+	node->offset += len;
+
+	assert(node->offset <= node->size);
+	if (node->offset == node->size) {
+		// we are finished sending.
+		node->sending = false;
+		close(node->filehandle);
+		node->filehandle = INVALID_HANDLE;
 	}
 }
 
 
 
 
-
-void cmdNop(void *base) 
+// the node is requesting a file.
+void processGet(node_t *node) 
 {
-	node_t *ptr = (node_t *) base;
-	ptr->stats->commands ++;
+	unsigned int avail;
+	char *filename;
+	int flen;
+	
+	assert(node != NULL);
+	
+	if (node->data.file.length == 0) {
+		// the client did not provide a filename...
+		addCmd(&node->out, CMD_CLEAR);
+		addCmd(&node->out, CMD_FAIL);
+		addCmd(&node->out, CMD_EXECUTE);
+	}
+	else {
+		
+		// open the file and get the size of it.
+		assert(node->filehandle == INVALID_HANDLE);
+		
+		flen = node->data.file.length;
+		if (node->storepath != NULL) { flen += strlen(node->storepath) + 1; }
+		filename = (char *) malloc(flen + 1);
+		assert(filename);
+		if (node->storepath != NULL) {
+			strcpy(filename, node->storepath);
+			strcat(filename, "/");
+			strncat(filename, node->data.file.data, node->data.file.length);
+			filename[flen] = '\0';
+		}
+		
+		if (node->verbose) printf("node:%d - opening file: %s\n", node->handle, filename);
+		
+		node->filehandle = open(filename, O_RDONLY);
+		if (node->filehandle < 0) {
+			if (node->verbose) printf("node:%d - unable to open file: %s\n", node->handle, filename);
+			addCmd(&node->out, CMD_CLEAR);
+			addCmd(&node->out, CMD_FAIL);
+			addCmd(&node->out, CMD_EXECUTE);
+		}
+		else {
+		
+			if (node->verbose) printf("node:%d - sending file: %s\n", node->handle, filename);
+			
+			// we've opened the file... now we need to determine its size.
+			assert(node->size == 0);
+			node->size = lseek(node->filehandle, 0, SEEK_END);
+			lseek(node->filehandle, 0, SEEK_SET);
+
+			if (node->verbose) printf("node:%d - file size: %d\n", node->handle, node->size);
+			
+			// offset should already be 0, needs to be because we are starting from the begining.
+			assert(node->offset == 0);
+
+			// we are going to be reading file data into the filebuf buffer.   Since this is the first GET. then we will just read in the data to the filebuf filling it if we can.
+
+			assert(node->filebuf.max == 0);
+
+			expbuf_shrink(&node->filebuf, 1024);
+			
+			avail = node->filebuf.max;
+			if (node->size < avail) { avail = node->size; }
+			assert(avail > 0);
+
+			assert(avail <= node->filebuf.max);
+			node->filebuf.length = read(node->filehandle, node->filebuf.data, avail);
+			assert(node->filebuf.length > 0);
+			assert(node->filebuf.length <= avail);
+
+			addCmd(&node->out, CMD_CLEAR);
+			addCmd(&node->out, CMD_PUT);
+			addCmdShortStr(&node->out, CMD_FILE, node->data.file.length, node->data.file.data);
+			addCmdLargeInt(&node->out, CMD_SIZE, node->size);
+			addCmdLargeInt(&node->out, CMD_OFFSET, node->offset);
+			addCmdLargeStr(&node->out, CMD_DATA, node->filebuf.length, node->filebuf.data);
+			addCmd(&node->out, CMD_EXECUTE);
+			
+			assert(node->out.length <= node->out.max);
+
+			if (node->verbose) printf("node:%d Sending %d (%d)\n", node->handle, node->filebuf.length, node->out.length);
+			
+			assert(node->sending == false);
+			assert(node->offset == 0);
+			
+			node->sending = true;
+			node->offset = node->filebuf.length;
+		}
+		assert(filename != NULL);
+		free(filename); filename = NULL;
+	}
 }
 
-void cmdInvalid(void *base, void *data)
+
+
+void cmdNop(node_t *ptr) 
+{
+	assert(ptr != NULL);
+	assert(ptr->stats != NULL);
+	ptr->stats->commands ++;
+
+	printf("node:%d NOP\n", ptr->handle);
+}
+
+void cmdInvalid(node_t *ptr, void *data, risp_length_t len)
 {
 	// this callback is called if we have an invalid command.  We shouldn't be receiving any invalid commands.
 	unsigned char *cast;
+
+	assert(ptr != NULL);
+	assert(data != NULL);
+	assert(len > 0);
+	
 	cast = (unsigned char *) data;
-	printf("Received invalid: [%d, %d, %d]\n", cast[0], cast[1], cast[2]);
+	printf("Received invalid (%d)): [%d, %d, %d]\n", len, cast[0], cast[1], cast[2]);
 	assert(0);
 }
 
@@ -251,21 +437,13 @@ void cmdInvalid(void *base, void *data)
 // should be in a predictable state.
 void cmdClear(void *base) 
 {
-	// The base pointer that is passed thru the library doesnt know about the 
-	// node structure we are using, so we need to make a cast-pointer for it.
  	node_t *ptr = (node_t *) base;
-	
-	// Always a good idea to put lots of asserts in your code.  It helps to 
-	// capture developer mistakes that would sometimes be difficult to catch at 
-	// a later date.
-//  	assert(ptr != NULL);
-	
-	// Now we clear off our protocol specific variables and flags.
-	ptr->url[0] = '\0';
-	ptr->ttl = 0;
-	
-//  	assert(ptr->stats != NULL);
+ 	assert(ptr != NULL);
+	data_clear(&ptr->data);
+ 	assert(ptr->stats != NULL);
 	ptr->stats->commands ++;
+
+	printf("node:%d CLEAR\n", ptr->handle);
 }
 
 
@@ -276,50 +454,168 @@ void cmdClear(void *base)
 // this example.   
 void cmdExecute(void *base) 
 {
+	risp_length_t existing;
 	node_t *ptr = (node_t *) base;
-//  	assert(ptr != NULL);
+ 	assert(ptr != NULL);
 	
-//  	assert(ptr->stats != NULL);
+ 	assert(ptr->stats != NULL);
 	ptr->stats->operations ++;
 	ptr->stats->commands ++;
 
-	// All we can do really in this exercise is to print out the values that we have.
-//  	printf("Execute!  (url: '%s', ttl: %d)\n", ptr->url, ptr->ttl);
+	existing = ptr->out.length;
+
+	printf("node:%d EXECUTE (%d)\n", ptr->handle, ptr->data.op);
+
+	// here we check what the current operation is.
+	switch(ptr->data.op) {
+		case CMD_LIST:
+// 			processList(ptr);
+			break;
+
+		case CMD_LISTING:
+// 			processListing(ptr);
+			break;
+			
+		case CMD_LISTING_DONE:
+// 			processListingDone(ptr);
+			break;
+
+		case CMD_PUT:
+// 			processPut(ptr);
+			break;
+
+		case CMD_GET:
+			processGet(ptr);
+			break;
+
+		default:
+			// we should not have any other op than what we know about.
+			assert(0);
+			break;
+	}
+	
+	if (existing == 0 && ptr->out.length > 0) {
+		// we weren't previously going to send out anything... but now we are, so we need to send the write event.
+		if (event_del(&ptr->event) != -1) {
+			event_set(&ptr->event, ptr->handle, EV_READ | EV_WRITE | EV_PERSIST, node_event_handler, base);
+			event_base_set(ptr->event.ev_base, &ptr->event);
+			event_add(&ptr->event, 0);
+		}
+	}
 }
+
+
+void cmdList(node_t *ptr)
+{
+ 	assert(ptr != NULL);
+	ptr->data.op = CMD_LIST;
+ 	assert(ptr->stats != NULL);
+	ptr->stats->commands ++;
+	printf("node:%d LIST\n", ptr->handle);
+}
+
+void cmdListing(void *base)
+{
+ 	node_t *ptr = (node_t *) base;
+ 	assert(ptr != NULL);
+	
+	ptr->data.op = CMD_LISTING;
+	
+ 	assert(ptr->stats != NULL);
+	ptr->stats->commands ++;
+}
+
+void cmdListingDone(void *base)
+{
+ 	node_t *ptr = (node_t *) base;
+ 	assert(ptr != NULL);
+	
+	ptr->data.op = CMD_LISTING_DONE;
+	
+ 	assert(ptr->stats != NULL);
+	ptr->stats->commands ++;
+}
+
+void cmdPut(void *base)
+{
+ 	node_t *ptr = (node_t *) base;
+ 	assert(ptr != NULL);
+	
+	ptr->data.op = CMD_PUT;
+	
+ 	assert(ptr->stats != NULL);
+	ptr->stats->commands ++;
+}
+
+void cmdGet(node_t *ptr)
+{
+ 	assert(ptr != NULL);
+	ptr->data.op = CMD_GET;
+ 	assert(ptr->stats != NULL);
+	ptr->stats->commands ++;
+	printf("node:%d GET\n", ptr->handle);
+}
+
+
+
+void cmdSize(node_t *ptr, risp_int_t value)
+{
+	assert(ptr != NULL);
+	assert(value >= 0 && value < 256);
+	ptr->data.size = value;
+	assert(ptr->stats != NULL);
+	ptr->stats->commands ++;
+	printf("node:%d SIZE %d\n", ptr->handle, value);
+}
+
+void cmdOffset(node_t *ptr, risp_int_t value)
+{
+	assert(ptr != NULL);
+	assert(value >= 0 && value < 256);
+	ptr->data.offset = value;
+	assert(ptr->stats != NULL);
+	ptr->stats->commands ++;
+	printf("node:%d OFFSET %d\n", ptr->handle, value);
+}
+
+
 
 // This callback function is fired when we receive the CMD_URL command.  We 
 // dont need to actually do anything productive with this, other than storing 
 // the information into some internal variable.
-void cmdURL(void *base, risp_length_t length, risp_char_t *data) 
+void cmdFile(node_t *ptr, risp_length_t length, risp_char_t *data)
 {
-	node_t *ptr = (node_t *) base;
+	char filename[256];
 	
-	// At every opportunity, we need to make sure that our data is legit.
-// 	assert(base != NULL);
-// 	assert(length >= 0);
-// 	assert(data != NULL);
-// 	assert(length < 256);
+	assert(ptr != NULL);
+	assert(length >= 0);
+	assert(length < 256);
+	assert(data != NULL);
 
 	// copy the string that was provides from the stream (which is guaranteed to 
 	// be complete)
-// 	memcpy(ptr->url, data, length);
-// 	ptr->url[length] = '\0';
+	expbuf_set(&ptr->data.file, data, length);
 
-// 	assert(ptr->stats != NULL);
+	assert(ptr->stats != NULL);
 	ptr->stats->commands ++;
+
+	strncpy(filename, (char *)data, length);
+	filename[length] = '\0';
+	printf("node:%d FILE \"%s\"\n", ptr->handle, filename);
 }
 
-void cmdTtl(void *base, risp_int_t value) 
+void cmdData(node_t *ptr, risp_length_t length, risp_char_t *data)
 {
-	node_t *ptr = (node_t *) base;
-// 	assert(base != NULL);
-// 	assert(value >= 0 && value < 256);
-	
-// 	ptr->ttl = value;
-		
-// 	assert(ptr->stats != NULL);
+	assert(ptr != NULL);
+	assert(length >= 0);
+	assert(length < 256);
+	assert(data != NULL);
+	expbuf_set(&ptr->data.data, data, length);
+	assert(ptr->stats != NULL);
 	ptr->stats->commands ++;
+	printf("node:%d DATA <%d>\n", ptr->handle, length);
 }
+
 
 
 // used to clear a previously valid node.
@@ -332,25 +628,18 @@ void node_clear(node_t *node)
 		event_del(&node->event);
 	}
 	
-	node->handle = INVALID_HANDLE;
+	assert(node->handle == INVALID_HANDLE);
 	memset(&node->event, 0, sizeof(node->event));
 	node->active = false;
+	node->sending = false;
+	assert(node->filehandle == INVALID_HANDLE);
+	node->offset = 0;
+	node->size = 0;
 	
-	assert(node->out_buffer_max >= node->out_buffer_len);
-	assert(node->in_buffer_max >= node->in_buffer_len);
-	assert((node->in_buffer == NULL && node->in_buffer_len == 0) || (node->in_buffer != NULL && node->in_buffer_len >= 0));
-	assert((node->out_buffer == NULL && node->out_buffer_len == 0) || (node->out_buffer != NULL && node->out_buffer_len >= 0));
-		
-	if (node->in_buffer != NULL) { free(node->in_buffer); }
-	if (node->out_buffer != NULL) { free(node->out_buffer); }
+	expbuf_clear(&node->in);
+	expbuf_clear(&node->out);
 	
-	node->in_buffer = NULL;
-	node->in_buffer_len = 0;
-	node->in_buffer_max = 0;
-	
-	node->out_buffer = NULL;
-	node->out_buffer_len = 0;
-	node->out_buffer_max = 0;
+	data_clear(&node->data);
 }
 
 
@@ -362,36 +651,20 @@ void node_clear(node_t *node)
 void node_init(node_t *node)
 {
 	assert(node != NULL);
+	
+	node->handle = INVALID_HANDLE;
+	node->filehandle = INVALID_HANDLE;
+	node->storepath = NULL;
+	node->stats = NULL;
+	node->risp = NULL;
+	expbuf_init(&node->in, DEFAULT_BUFFSIZE);
+	expbuf_init(&node->out, DEFAULT_BUFFSIZE);
+	expbuf_init(&node->filebuf, 0);
+	data_init(&node->data);
+	
 	node_clear(node);
 	node->active = false;
 }
-
-
-// allocate space off the heap for a new struct.  clear and initialise it with the new handle.
-node_t * node_new(void)
-{
-	node_t *node;
-	
-	node = (node_t *) malloc(sizeof(node_t));
-	assert(node);
-		
-	node->stats = NULL;
-	node->risp = NULL;
-
-	node->next = NULL;
-	node->prev = NULL;
-
-	node->in_buffer = NULL;
-	node->out_buffer = NULL;
-	node->in_buffer_len = 0;
-	node->out_buffer_len = 0;
-	node->in_buffer_max = 0;
-	node->out_buffer_max = 0;
-
-	node_init(node);
-	return(node);
-}
-
 
 
 
@@ -410,45 +683,59 @@ static void node_event_handler(int hid, short flags, void *data)
 	
 	node = (node_t *) data;
 
-// 	assert(node != NULL);
-// 	assert(node->handle == hid);
-// 	assert(node->stats != NULL);
-// 	assert(node->active == true);
-// 	assert(node->event.ev_base != NULL);
+	assert(node != NULL);
+	assert(node->handle == hid);
+	assert(node->stats != NULL);
+	assert(node->active == true);
+	assert(node->event.ev_base != NULL);
 	
-// 	assert(node->in_buffer_len <= node->in_buffer_max);
-// 	assert(node->out_buffer_len <= node->out_buffer_max);
-// 	assert((node->in_buffer == NULL && node->in_buffer_len == 0 && node->in_buffer_max == 0) || (node->in_buffer != NULL && node->in_buffer_len >= 0 && node->in_buffer_max > 0));
-// 	assert((node->out_buffer == NULL && node->out_buffer_len == 0 && node->out_buffer_max == 0) || (node->out_buffer != NULL && node->out_buffer_len >= 0 && node->out_buffer_max > 0));
-
 	if (flags & EV_READ) {
 	
-		avail = node->in_buffer_max - node->in_buffer_len;
-		if (avail < DEFAULT_CHUNKSIZE) {
-			node->stats->meml ++;
-			node->in_buffer_max += DEFAULT_CHUNKSIZE;
-			node->stats->maxbuf += DEFAULT_CHUNKSIZE;
-			node->in_buffer = (unsigned char *) realloc(node->in_buffer, node->in_buffer_max);
-			avail = node->in_buffer_max - node->in_buffer_len;
+		assert(node->in.max >= DEFAULT_BUFFSIZE);
+		
+		avail = node->in.max - node->in.length;
+		if (avail < DEFAULT_BUFFSIZE) {
+			// we dont have much space left in the buffer, lets double its size.
+			expbuf_shrink(&node->in, node->in.max * 2);
+			avail = node->in.max - node->in.length;
 		}
-// 		assert(avail >= DEFAULT_CHUNKSIZE);
-	
-		res = read(hid, node->in_buffer + node->in_buffer_len, avail);
+		// for performance reasons, we will read the data in directly into the expanding buffer.
+		assert(avail >= DEFAULT_BUFFSIZE);
+		node->stats->reads++;
+		res = read(hid, node->in.data+node->in.length, avail);
 		if (res > 0) {
 			node->stats->in_bytes += res;
-			node->in_buffer_len += res;
-			assert(node->in_buffer_len <= node->in_buffer_max);
+			node->in.length += res;
+			assert(node->in.length <= node->in.max);
 
 			// if we pulled out the max we had avail in our buffer, that means we can pull out more at a time.
 			if (res == avail) {
-				node->stats->meml ++;
-				node->in_buffer_max += DEFAULT_CHUNKSIZE;
-				node->stats->maxbuf += DEFAULT_CHUNKSIZE;
-				node->in_buffer = (unsigned char *) realloc(node->in_buffer, node->in_buffer_max);
+				expbuf_shrink(&node->in, node->in.max * 2);
 			}
-
+			
+			assert(node->active);
+			if (node->in.length > 0) {
+				
+				assert(node->risp != NULL);
+				
+				node->stats->cycles ++;
+				res = risp_process(node->risp, node, node->in.length, (unsigned char *) node->in.data);
+	 			assert(res <= node->in.length);
+	 			assert(res >= 0);
+				if (res < node->in.length) {
+					node->stats->undone += (node->in.length - res);
+				}
+	 			if (res > 0) {
+					expbuf_purge(&node->in, res);
+				}
+			}
 		}
 		else if (res == 0) {
+			node->handle = INVALID_HANDLE;
+			if (node->filehandle != INVALID_HANDLE) {
+				close(node->filehandle);
+				node->filehandle = INVALID_HANDLE;
+			}
 			node_clear(node);
 			assert(node->active == false);
 			printf("Node[%d] closed while reading.\n", hid);
@@ -456,37 +743,15 @@ static void node_event_handler(int hid, short flags, void *data)
 		else {
 			assert(res == -1);
 			if (errno != EAGAIN && errno != EWOULDBLOCK) {
+				close(node->handle);
+				node->handle = INVALID_HANDLE;
+				if (node->filehandle != INVALID_HANDLE) {
+					close(node->filehandle);
+					node->filehandle = INVALID_HANDLE;
+				}
 				node_clear(node);
 				assert(node->active == false);
 				printf("Node[%d] closed while reading- because of error: %d\n", hid, errno);
-			}
-		}
-		
-		if (node->active && node->in_buffer_len > 0) {
-			
-// 			assert(node->risp != NULL);
-// 			assert(node->in_buffer_len <= node->in_buffer_max);
-// 			assert(node->in_buffer_len > 0);
-			
-			node->stats->cycles ++;
-			res = risp_process(node->risp, node, node->in_buffer_len, node->in_buffer);
-//  			assert(res <= node->in_buffer_len);
-//  			assert(res >= 0);
-			if (res < node->in_buffer_len) {
-			
-				// our biggest (sample) command is a maximum of 256+2+1 bytes.  SO we should only ever have a partial left over of less than that.  If we have more left over than that... then we either have corrupted data, or 
-// 				assert((node->in_buffer_len - res) <= (256+2+1));
-				
-				
-				node->stats->undone += (node->in_buffer_len - res);
-			
-				// to ensure that we dont run out of memory, the partial system is not suitable when large volumes of data is being sent.
-				avail = node->in_buffer_len - res;
-				memmove(node->in_buffer, node->in_buffer + res, avail);
-				node->in_buffer_len -= res;
-			}
-			else {
-				node->in_buffer_len = 0;
 			}
 		}
 	}
@@ -494,27 +759,31 @@ static void node_event_handler(int hid, short flags, void *data)
 	if (flags & EV_WRITE && node->active) {		
 		
 		// we've requested the event, so we should have data to process.
-		assert(node->out_buffer != NULL);
-		assert(node->out_buffer_len > 0);
-		assert(node->out_buffer_max > 0);
-		assert(node->out_buffer_len <= node->out_buffer_max);
-		
-		res = send(hid, node->out_buffer, node->out_buffer_len, 0);
+		assert(node->out.length > 0);
+		assert(node->out.length <= node->out.max);
+
+		node->stats->writes ++;
+		res = send(hid, node->out.data, node->out.length, 0);
 		if (res > 0) {
 			// we managed to send some, or maybe all....
-			assert(res <= node->out_buffer_len);
-			if (res == node->out_buffer_len) {	
-				// we sent all of it.
-				node->out_buffer_len = 0;
+			assert(res <= node->out.length);
+			node->stats->out_bytes += res;
+			expbuf_purge(&node->out, res);
+			
+			// if we are in the process of transmitting a file, then we need
+			// to get more file data and put in the buffer, since we depleted
+			// some of it.
+			if (node->sending) {
+				sendFileData(node);
 			}
-			else {
-				// we only sent some of it.
-				memmove(node->out_buffer, node->out_buffer + res, node->out_buffer_len - res);
-				node->out_buffer_len -= res;
-				assert(node->out_buffer_len > 0);
-			}
+			
 		}
 		else if (res == 0) {
+			node->handle = INVALID_HANDLE;
+			if (node->filehandle != INVALID_HANDLE) {
+				close(node->filehandle);
+				node->filehandle = INVALID_HANDLE;
+			}
 			node_clear(node);
 			assert(node->active == false);
 			printf("Node[%d] closed while writing.\n", hid);
@@ -522,6 +791,12 @@ static void node_event_handler(int hid, short flags, void *data)
 		else {
 			assert(res == -1);
 			if (errno != EAGAIN && errno != EWOULDBLOCK) {
+				close(node->handle);
+				node->handle = INVALID_HANDLE;
+				if (node->filehandle != INVALID_HANDLE) {
+					close(node->filehandle);
+					node->filehandle = INVALID_HANDLE;
+				}
 				node_clear(node);
 				assert(node->active == false);
 				printf("Node[%d] closed while writing - because of error: %d\n", hid, errno);
@@ -529,7 +804,7 @@ static void node_event_handler(int hid, short flags, void *data)
 		}
 		
 		// if we have sent everything, then we dont need to wait for a WRITE event anymore, so we need to re-establish the events.
-		if (node->active && node->out_buffer_len == 0) {
+		if (node->active && node->out.length == 0) {
 			if (event_del(&node->event) != -1) {
 				event_set(&node->event, hid, EV_READ | EV_PERSIST, node_event_handler, (void *)node);
 				event_base_set(node->event.ev_base, &node->event);
@@ -537,24 +812,6 @@ static void node_event_handler(int hid, short flags, void *data)
 			}		
 		}
 	}		
-	
-	
-	// Once our 'partial' processing has passed a certain point, we want to clean up the memory that we have allocated.  This is also to combat situations where people are sending a valid data stream but deliberately leaving an unfinished command at the end of each packet (completed at the beginining of the next packet), which would normally end up increasing the amount of memory used by the node.   This is intended to ensure that doesn't cause more serious memory issues.
- 	if (node->in_buffer_max > OPTIMAL_MAX) {
-		
-		if (node->in_buffer_len < node->in_buffer_max) {
-			node->stats->maxbuf -= (node->in_buffer_max - node->in_buffer_len);
-			node->in_buffer = (unsigned char *) realloc(node->in_buffer, node->in_buffer_len);
-			printf("shrunk inbuffer [len=%d, max=%d]\n", node->in_buffer_len, node->in_buffer_max);
-			node->in_buffer_max = node->in_buffer_len;
-		}
- 	}
-	
-// 	if (node->out_partial > OPTIMAL_PARTIAL) {
-		//////
-// 	}
-	
- 	///// If the in_buffer_max and out_buffer_max are larger than our optimum, then we should shrink the buffer if we have a chance.
 }
 
 
@@ -714,7 +971,6 @@ server_t *server_new(int port, int maxconns, char *address)
 	ptr->stats = NULL;
 	ptr->risp = NULL;
 	ptr->verbose = false;
-	ptr->next = NULL;
 	
 	// We will create an array of empty pointers for our nodes.
 	ptr->maxconns = maxconns;
@@ -772,7 +1028,10 @@ static void server_event_handler(int hid, short flags, void *data)
 	assert(node == NULL);
 	if (server->nodes[sfd] == NULL) {
 		printf("Creating a new node\n");
-		node = node_new();
+
+		node = (node_t *) malloc(sizeof(node_t));
+		node_init(node);
+
 		server->nodes[sfd] = node;
 		node->handle = sfd;
 		node->verbose = server->verbose;
@@ -785,10 +1044,14 @@ static void server_event_handler(int hid, short flags, void *data)
 		
 		assert(server->risp != NULL);
 		node->risp = server->risp;
+		
+		assert(server->storepath != NULL);
+		node->storepath = server->storepath;
 	}
 	else {
 	
 		node = server->nodes[sfd];
+		assert(node->storepath != NULL);
 		if (node->active == false) {
 			printf("Re-using an existing node\n");
 
@@ -801,6 +1064,9 @@ static void server_event_handler(int hid, short flags, void *data)
 		else {
 			assert(node->handle != sfd);
 			assert(0);
+
+			// need to code for an instance where we use some other slot.
+			
 		}
 	}
 	
@@ -824,8 +1090,8 @@ void server_add_event(server_t *server, struct event_base *evbase)
 	
 	assert(server->handle >= 0);
 
-  event_set(&server->event, server->handle, (EV_READ | EV_PERSIST), server_event_handler, (void *)server);
-  event_base_set(evbase, &server->event);
+	event_set(&server->event, server->handle, (EV_READ | EV_PERSIST), server_event_handler, (void *)server);
+	event_base_set(evbase, &server->event);
 	if (event_add(&server->event, NULL) == -1) {
 		perror("event_add");
 	}
@@ -833,22 +1099,18 @@ void server_add_event(server_t *server, struct event_base *evbase)
 
 
 
-settings_t * settings_new(void)
+void settings_init(settings_t *ptr)
 {
-	settings_t *ptr;
-	ptr = (settings_t *) malloc(sizeof(settings_t));
 	assert(ptr != NULL);
 
 	ptr->port = DEFAULT_PORT;
 	ptr->maxconns = DEFAULT_MAXCONNS;
-	ptr->maxbytes = DEFAULT_MAXBYTES;
 	ptr->verbose = false;
-  ptr->daemonize = false;
-  ptr->username = NULL;
-  ptr->pid_file = NULL;
-  ptr->interface = NULL;
-
-	return(ptr);
+	ptr->daemonize = false;
+	ptr->username = NULL;
+	ptr->pid_file = NULL;
+	ptr->interface = NULL;
+	ptr->storepath = NULL;
 }
 
 void settings_cleanup(settings_t *ptr) 
@@ -859,18 +1121,13 @@ void settings_cleanup(settings_t *ptr)
 
 
 
-timeout_t *timeout_new(void)
-{
-	timeout_t *ptr;
-	ptr = (timeout_t *) malloc(sizeof(timeout_t));
-	assert(ptr != NULL);
-	return(ptr);
-}
 
 
 static void timeout_handler(const int fd, const short which, void *arg) {
 	struct timeval t = {.tv_sec = 1, .tv_usec = 0};
 	timeout_t *ptr;
+	unsigned int inmem, outmem, filemem;
+	int i;
 	
 	ptr  = (timeout_t *) arg;
 
@@ -878,7 +1135,7 @@ static void timeout_handler(const int fd, const short which, void *arg) {
 	assert(ptr->clockevent.ev_base != NULL);
 
 	// reset the timer to go off again in 1 second.
-  evtimer_del(&ptr->clockevent);
+	evtimer_del(&ptr->clockevent);
 	evtimer_set(&ptr->clockevent, timeout_handler, arg);
 	event_base_set(ptr->clockevent.ev_base, &ptr->clockevent);
 	evtimer_add(&ptr->clockevent, &t);
@@ -889,14 +1146,33 @@ static void timeout_handler(const int fd, const short which, void *arg) {
 	assert(ptr->stats != NULL);
 	
 	if (ptr->stats->in_bytes || ptr->stats->out_bytes || ptr->stats->commands || ptr->stats->operations) {
-		printf("Bytes [%u/%u], Commands [%u], Operations[%u], Max[%u/%u], Cycles[%u], Undone[%u]\n", ptr->stats->in_bytes, ptr->stats->out_bytes, ptr->stats->commands, ptr->stats->operations, ptr->stats->meml, ptr->stats->maxbuf, ptr->stats->cycles, ptr->stats->undone);
+
+		inmem=0;
+		outmem=0;
+		filemem = 0;
+
+		for(i=0; i<ptr->server->maxconns; i++) {
+			if (ptr->server->nodes[i] != NULL) {
+				inmem += ptr->server->nodes[i]->in.length;
+				outmem += ptr->server->nodes[i]->out.length;
+				filemem += ptr->server->nodes[i]->filebuf.length;
+			}
+		}
+
+		if (inmem > 0) { inmem /= 1024; }
+		if (outmem > 0) { outmem /= 1024; }
+		if (filemem > 0) { filemem /= 1024; }
+
+	
+		printf("Bytes [%u/%u], Commands [%u], Operations[%u], Mem[%uk/%uk/%uk], Cycles[%u], Undone[%u], RW[%u/%u]\n", ptr->stats->in_bytes, ptr->stats->out_bytes, ptr->stats->commands, ptr->stats->operations, inmem, outmem, filemem, ptr->stats->cycles, ptr->stats->undone, ptr->stats->reads, ptr->stats->writes);
 		ptr->stats->in_bytes = 0;
 		ptr->stats->out_bytes = 0;
 		ptr->stats->commands = 0;
 		ptr->stats->operations = 0;
-		ptr->stats->meml = 0;
 		ptr->stats->cycles = 0;
 		ptr->stats->undone = 0;
+		ptr->stats->reads = 0;
+		ptr->stats->writes = 0;
 	}
 }
 
@@ -922,20 +1198,20 @@ void timeout_init(timeout_t *ptr, struct event_base *base)
 // sockets and event loop.
 int main(int argc, char **argv) 
 {
-  int c;
+	int c;
 	settings_t     *settings = NULL;
 	server_t       *server   = NULL;
 	timeout_t      *timeout  = NULL;
-  stats_t        *stats    = NULL;
-  risp_t         *risp     = NULL;
-
+	stats_t        *stats    = NULL;
+	risp_t         *risp     = NULL;
 
 	// handle SIGINT 
 	signal(SIGINT, sig_handler);
 	
 	// init settings
-	settings = settings_new();
+	settings = (settings_t *) malloc(sizeof(settings_t));
 	assert(settings != NULL);
+	settings_init(settings);
 
 	// set stderr non-buffering (for running under, say, daemontools)
 	setbuf(stderr, NULL);
@@ -943,19 +1219,16 @@ int main(int argc, char **argv)
 
 	// process arguments 
 	/// Need to check the options in here, there're possibly ones that we dont need.
-	while ((c = getopt(argc, argv, "p:k:c:hrvd:u:P:l:")) != -1) {
+	while ((c = getopt(argc, argv, "p:k:c:hvd:u:P:l:s:")) != -1) {
 		switch (c) {
 			case 'p':
 				settings->port = atoi(optarg);
 				assert(settings->port > 0);
 				break;
-			case 'k':
-        settings->maxbytes = ((size_t)atoi(optarg)) * 1024;
-        break;
-    	case 'c':
-        settings->maxconns = atoi(optarg);
-        assert(settings->maxconns > 0);
-        break;
+			case 'c':
+				settings->maxconns = atoi(optarg);
+				assert(settings->maxconns > 0);
+				break;
 			case 'h':
 				usage();
 				exit(EXIT_SUCCESS);
@@ -966,6 +1239,11 @@ int main(int argc, char **argv)
 				assert(settings->daemonize == false);
 				settings->daemonize = true;
 				break;
+			case 's':
+				assert(settings->storepath == NULL);
+				settings->storepath = optarg;
+				assert(settings->storepath != NULL);
+				assert(settings->storepath[0] != '\0');
 			case 'u':
 				assert(settings->username == NULL);
 				settings->username = optarg;
@@ -1035,7 +1313,7 @@ int main(int argc, char **argv)
 		if (settings->verbose) printf("Saving Pid file: %s\n", settings->pid_file);
 		save_pid(getpid(), settings->pid_file);
 	}
-       
+
 	// create and init the 'server' structure.
 	if (settings->verbose) printf("Starting server listener on port %d.\n", settings->port);
 	server = server_new(settings->port, settings->maxconns, settings->interface);
@@ -1045,7 +1323,8 @@ int main(int argc, char **argv)
 	}
 	assert(server != NULL);
 	server->verbose = settings->verbose;
-	
+
+	server->storepath = settings->storepath;
 	
 	
 	// add the server to the event base
@@ -1062,7 +1341,8 @@ int main(int argc, char **argv)
 	// 'complete' paths that we have, and ensuring that the 'chunks' parts are 
 	// valid.
 	if (settings->verbose) printf("Setting up Timeout event.\n");
-	timeout = timeout_new();
+	timeout = (timeout_t *) malloc(sizeof(timeout_t));
+
 	assert(timeout != NULL);
 	assert(main_event_base != NULL);
 	if (settings->verbose) printf("Initialising timeout.\n");
@@ -1074,8 +1354,6 @@ int main(int argc, char **argv)
 	stats->in_bytes = 0;
 	stats->commands = 0;
 	stats->operations = 0;
-	stats->maxbuf = 0;
-	stats->meml = 0;
 
 	server->stats = stats;
 	timeout->stats = stats;
@@ -1084,26 +1362,34 @@ int main(int argc, char **argv)
 	risp = risp_init();
 	assert(risp != NULL);
 	risp_add_invalid(risp, cmdInvalid);
-	risp_add_command(risp, CMD_CLEAR, 	&cmdClear);
-	risp_add_command(risp, CMD_EXECUTE, &cmdExecute);
-	risp_add_command(risp, CMD_TTL,     &cmdTtl);
-	risp_add_command(risp, CMD_URL, 		&cmdURL);
-	
+	risp_add_command(risp, CMD_CLEAR, 	     &cmdClear);
+	risp_add_command(risp, CMD_EXECUTE,      &cmdExecute);
+	risp_add_command(risp, CMD_LIST,         &cmdList);
+	risp_add_command(risp, CMD_LISTING, 	 &cmdListing);
+	risp_add_command(risp, CMD_LISTING_DONE, &cmdListingDone);
+	risp_add_command(risp, CMD_PUT,      	 &cmdPut);
+	risp_add_command(risp, CMD_GET,          &cmdGet);
+	risp_add_command(risp, CMD_SIZE,         &cmdSize);
+	risp_add_command(risp, CMD_OFFSET,       &cmdOffset);
+	risp_add_command(risp, CMD_FILE,         &cmdFile);
+	risp_add_command(risp, CMD_DATA,         &cmdData);
+
 	assert(server->risp == NULL);
 	server->risp = risp;
 
+	
 
-  // enter the event loop.
-  if (settings->verbose) printf("Starting Event Loop\n\n");
-	event_base_loop(main_event_base, 0);
+	// enter the event loop.
+	if (settings->verbose) printf("Starting Event Loop\n\n");
+		event_base_loop(main_event_base, 0);
     
-  // cleanup risp library.
+	// cleanup risp library.
 	risp_shutdown(risp);
-  risp = NULL;
+	risp = NULL;
     
 	// cleanup 'server', which should cleanup all the 'nodes'
     
-  if (settings->verbose) printf("\n\nExiting.\n");
+	if (settings->verbose) printf("\n\nExiting.\n");
     
 	// remove the PID file if we're a daemon
 	if (settings->daemonize && settings->pid_file != NULL) {

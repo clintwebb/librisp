@@ -14,6 +14,7 @@
 
 
 #include <risp.h>
+
 #include <stdio.h>
 #include <assert.h>
 #include <stdlib.h>
@@ -29,14 +30,8 @@
 #include <assert.h>
 #include <stdio.h>
 
-#include "risp_server_prot.h"
+#include "rfx_prot.h"
 
-#define MAX_BUFFER (1024*512)
-#define TEST_STR	240
-#define TEST_MULT 8
-
-#define FULL_WAIT  150
-#define PART_WAIT  15
 
 static int sigtrap = 0;
 

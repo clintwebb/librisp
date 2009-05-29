@@ -32,6 +32,19 @@ This means that the processing becomes more complicated, but hopefully is faster
 
 The fully-callback oriented system could process about 150mb of data per second, with almost 1 million operations per second being processed.  This new system should be able to do twice that amount of data.
 
+ ***  After thinking about how to implement this, I have determined that what 
+ ***  little CPU is saved as each command comes in, which be lost (and some) 
+ ***  when trying to process the EXECUTE command.  Because it would have to 
+ ***  loop through the data structures provided (256 times actually) to 
+ ***  determine what commands have been received and what needs to be processed.   
+ ***  Using the callback method though, would mean that as the callbacks come 
+ ***  in, a particular flag entry can be kept which can keep track of the most 
+ ***  recent action command received.   So even though we are making a function 
+ ***  call for every peice of data returned, it keeps things simple.   I may 
+ ***  ressurect and attempt this idea in the future after I think about it for 
+ ***  a while and try to determine if there is a good way of processing the 
+ ***  data.
+
 
 -------------------------------------------------------------------------------
 
