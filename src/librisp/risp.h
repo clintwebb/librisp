@@ -10,6 +10,10 @@
 #ifndef __LIBRISP_H
 #define __LIBRISP_H
 
+#define RISP_VERSION 0x00010000
+#define RISP_VERSION_NAME "v1.00.00"
+
+
 #define RISP_MAX_USER_CMD    256
 
 ///////////////////////////////////////////
