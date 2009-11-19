@@ -12,6 +12,11 @@
 #include <assert.h>
 
 
+#if (RISP_VERSION != 0x00010010)
+#error "Incorrect header version.  code and header versions must match."
+#endif
+
+
 #if (RISP_MAX_USER_CMD > 256)
 #error "Command can only be 1 byte."
 #endif
@@ -60,7 +65,7 @@ risp_result_t risp_shutdown(risp_t *risp)
 risp_result_t risp_add_command(risp_t *risp, risp_command_t command, void *callback) 
 {
 	assert(risp != NULL);
-	assert(command > 0);
+	assert(command >= 0);
 	assert(command < RISP_MAX_USER_CMD);
 	assert(callback != NULL);
 	
