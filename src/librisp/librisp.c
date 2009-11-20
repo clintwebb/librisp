@@ -50,11 +50,10 @@ risp_t *risp_init(void)
 
 //-----------------------------------------------------------------------------
 // Clean up the structure that were created by the library.  
-risp_result_t risp_shutdown(risp_t *risp)
+void risp_shutdown(risp_t *risp)
 {
 	assert(risp != NULL);
 	memset(risp->commands, 0, (RISP_MAX_USER_CMD*sizeof(void *)));
-	return(SUCCESS);
 }
 
 
@@ -63,7 +62,7 @@ risp_result_t risp_shutdown(risp_t *risp)
 // pointers, risp does not know definitively that the function specified 
 // expects the correct parameters.  If the callback function is not the correct 
 // type for the command-style, then it will generally end up with a segfault.
-risp_result_t risp_add_command(risp_t *risp, risp_command_t command, void *callback) 
+void risp_add_command(risp_t *risp, risp_command_t command, void *callback) 
 {
 	assert(risp != NULL);
 	assert(command >= 0);
@@ -75,11 +74,7 @@ risp_result_t risp_add_command(risp_t *risp, risp_command_t command, void *callb
 	
 	if (risp->commands[command] == NULL) {
 		risp->commands[command] = callback;
-		return(SUCCESS);
 	}
-	else {
-		return(FAILED);
-	}	
 }
 
 
@@ -89,14 +84,13 @@ risp_result_t risp_add_command(risp_t *risp, risp_command_t command, void *callb
 // pointers, risp does not know definitively that the function specified 
 // expects the correct parameters.  If the callback function is not the correct 
 // type for the command-style, then it will generally end up with a segfault.
-risp_result_t risp_add_invalid(risp_t *risp, void *callback) 
+void risp_add_invalid(risp_t *risp, void *callback) 
 {
 	assert(risp != NULL);
 	assert(callback != NULL);
 	
 	assert(risp->invalid == NULL);
 	risp->invalid = callback;
-	return(SUCCESS);
 }
 
 
