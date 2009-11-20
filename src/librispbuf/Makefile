@@ -6,8 +6,8 @@ ARGS=
 
 # Need to be able to make 'man-pages' as well.  Not sure where to get the source for those... 
 
-librispbuf.o: rispbuf.c rispbuf.h
-	gcc -c -fPIC rispbuf.c -o $@ $(ARGS)
+librispbuf.o: librispbuf.c rispbuf.h
+	gcc -c -fPIC librispbuf.c -o $@ $(ARGS)
 
 librispbuf.a: librispbuf.o
 	@>$@
