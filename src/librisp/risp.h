@@ -10,8 +10,8 @@
 #ifndef __LIBRISP_H
 #define __LIBRISP_H
 
-#define RISP_VERSION 0x00010010
-#define RISP_VERSION_NAME "v1.00.10"
+#define RISP_VERSION 0x00010020
+#define RISP_VERSION_NAME "v1.00.20"
 
 
 #define RISP_MAX_USER_CMD    256
@@ -19,10 +19,9 @@
 ///////////////////////////////////////////
 // create the types that we will be using.
 
-typedef unsigned char      risp_command_t;
-typedef unsigned int       risp_length_t;
-typedef int                risp_int_t;
-typedef unsigned char      risp_char_t;
+typedef unsigned char   risp_command_t;
+typedef unsigned int    risp_length_t;
+typedef int             risp_int_t;
 typedef enum { 
 	SUCCESS,
 	FAILED
@@ -48,6 +47,6 @@ risp_result_t risp_add_command(risp_t *risp, risp_command_t command, void *callb
 risp_result_t risp_add_invalid(risp_t *risp, void *callback);
 
 // providing data that needs to be processed and sent to the callback commands.  Will return the number of bytes that were processed.
-risp_length_t risp_process(risp_t *risp, void *base, risp_length_t length, risp_char_t *data);
+risp_length_t risp_process(risp_t *risp, void *base, risp_length_t length, const void *data);
 
 #endif

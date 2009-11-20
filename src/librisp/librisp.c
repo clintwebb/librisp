@@ -12,7 +12,7 @@
 #include <assert.h>
 
 
-#if (RISP_VERSION != 0x00010010)
+#if (RISP_VERSION != 0x00010020)
 #error "Incorrect header version.  code and header versions must match."
 #endif
 
@@ -32,7 +32,8 @@ risp_t *risp_init(void)
 	risp_t *risp;
 
 	// if our risp_char_t type is not actually 1 byte, not sure what would happen.
-	assert(sizeof(risp_char_t) == 1);
+	assert(sizeof(risp_command_t) == 1);
+	assert(RISP_MAX_USER_CMD <= 256);
 
 	// allocate memory for the main struct.
 	risp = (risp_t *) malloc(sizeof(risp_t));
@@ -105,19 +106,20 @@ risp_result_t risp_add_invalid(risp_t *risp, void *callback)
 // Process all the commands in the data buffer.  If we dont have enough data to 
 // complete the operation, then we return the number of bytes that we did not 
 // process.  The calling function can then figure out what to do with it.
-risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, risp_char_t *data)
+risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, const void *data)
 {
 	risp_length_t left, length;
-	risp_char_t *ptr;
-	risp_char_t cmd, style;
+	const unsigned char *ptr;
+	risp_command_t cmd;
+	unsigned char style;
 	risp_int_t value;
 	int cont = 1;
 	
 	// callback function prototypes.
 	void (*func_nul)(void *base) = NULL;
-	void (*func_int)(void *base, risp_int_t value) = NULL;
-	void (*func_str)(void *base, risp_length_t length, void *data) = NULL;
-	void (*func_inv)(void *base, void *data, int length) = risp->invalid;
+	void (*func_int)(void *base, const risp_int_t value) = NULL;
+	void (*func_str)(void *base, const risp_length_t length, const void *data) = NULL;
+	void (*func_inv)(void *base, const void *data, const risp_length_t length) = risp->invalid;
 	
 	
 // 	assert(risp != NULL);
@@ -126,7 +128,7 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, risp_cha
 // 	assert(data != NULL);
 	
 	left = len;
-	ptr = data;
+	ptr = (char *) data;
 	
 	while(cont != 0 && left > 0) {
 	
