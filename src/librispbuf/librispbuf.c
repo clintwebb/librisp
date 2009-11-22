@@ -2,10 +2,16 @@
 
 #include "rispbuf.h"
 
+#if (RISPBUF_VERSION != 0x00000200)
+#error "Incorrect header version.  code and header versions must match."
+#endif
+
+
+
 #include <assert.h>
 #include <string.h>
 
-void addCmd(expbuf_t *buf, risp_command_t cmd)
+void addCmd(expbuf_t *buf, const risp_command_t cmd)
 {
 	assert(buf != NULL);
 	assert(buf->length <= buf->max);
@@ -16,7 +22,7 @@ void addCmd(expbuf_t *buf, risp_command_t cmd)
 }
 
 
-void addCmdShortInt(expbuf_t *buf, risp_command_t cmd, unsigned char value)
+void addCmdShortInt(expbuf_t *buf, const risp_command_t cmd, const unsigned char value)
 {
 	register int avail, needed;
 	char *ptr;
@@ -38,9 +44,9 @@ void addCmdShortInt(expbuf_t *buf, risp_command_t cmd, unsigned char value)
 
 
 
-void addCmdInt(expbuf_t *buf, risp_command_t cmd, short int value)
+void addCmdInt(expbuf_t *buf, const risp_command_t cmd, const short int value)
 {
-	register int avail, needed;
+	int avail, needed;
 	char *ptr;
 	
 	assert(buf != NULL);
@@ -60,7 +66,7 @@ void addCmdInt(expbuf_t *buf, risp_command_t cmd, short int value)
 }
 
 
-void addCmdLargeInt(expbuf_t *buf, risp_command_t cmd, risp_int_t value)
+void addCmdLargeInt(expbuf_t *buf, const risp_command_t cmd, const risp_int_t value)
 {
 	int avail, needed;
 	char *ptr;
@@ -85,7 +91,7 @@ void addCmdLargeInt(expbuf_t *buf, risp_command_t cmd, risp_int_t value)
 
 
 
-void addCmdShortStr(expbuf_t *buf, risp_command_t cmd, risp_length_t length, char *data)
+void addCmdShortStr(expbuf_t *buf, const risp_command_t cmd, const risp_length_t length, const char *data)
 {
 	int avail, needed;
 	char *ptr;
@@ -110,7 +116,7 @@ void addCmdShortStr(expbuf_t *buf, risp_command_t cmd, risp_length_t length, cha
 	buf->length += needed;
 }
 
-void addCmdStr(expbuf_t *buf, risp_command_t cmd, risp_length_t length, char *data)
+void addCmdStr(expbuf_t *buf, const risp_command_t cmd, const risp_length_t length, const char *data)
 {
 	int avail, needed;
 	char *ptr;
@@ -137,7 +143,7 @@ void addCmdStr(expbuf_t *buf, risp_command_t cmd, risp_length_t length, char *da
 }
 
 
-void addCmdLargeStr(expbuf_t *buf, risp_command_t cmd, risp_length_t length, char *data)
+void addCmdLargeStr(expbuf_t *buf, const risp_command_t cmd, const risp_length_t length, const char *data)
 {
 	int avail, needed;
 	char *ptr;
@@ -161,3 +167,4 @@ void addCmdLargeStr(expbuf_t *buf, risp_command_t cmd, risp_length_t length, cha
 	memmove(ptr, data, length);
 	buf->length += needed;
 }
+
