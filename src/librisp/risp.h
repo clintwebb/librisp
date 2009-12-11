@@ -22,7 +22,7 @@
 typedef unsigned char   risp_command_t;
 typedef unsigned int    risp_length_t;
 typedef int             risp_int_t;
-
+typedef unsigned char   risp_data_t;
 
 typedef struct {
 	void *invalid;
