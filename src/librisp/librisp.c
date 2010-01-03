@@ -58,7 +58,7 @@ risp_t *risp_init(risp_t *risp)
 		}
 	}
 	
-	return(risp);
+	return(r);
 }
 
 
