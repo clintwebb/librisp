@@ -12,7 +12,7 @@
 #include <assert.h>
 
 
-#if (RISP_VERSION != 0x00020200)
+#if (RISP_VERSION != 0x00020300)
 #error "Incorrect header version.  code and header versions must match."
 #endif
 
@@ -65,7 +65,7 @@ risp_t *risp_init(risp_t *risp)
 
 //-----------------------------------------------------------------------------
 // Clean up the structure that were created by the library.  
-void risp_shutdown(risp_t *risp)
+risp_t * risp_shutdown(risp_t *risp)
 {
 	int i;
 	
@@ -84,6 +84,10 @@ void risp_shutdown(risp_t *risp)
 	assert(risp->created_internally == 1 | risp->created_internally == 0);
 	if (risp->created_internally == 1) {
 		free(risp);
+		return(NULL);
+	}
+	else {
+		return(risp);
 	}
 }
 

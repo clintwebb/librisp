@@ -22,8 +22,8 @@
 
 
 
-#define RISP_VERSION 0x00020200
-#define RISP_VERSION_NAME "v2.02.00"
+#define RISP_VERSION 0x00020300
+#define RISP_VERSION_NAME "v2.03.00"
 
 
 #define RISP_MAX_USER_CMD    256
@@ -56,7 +56,7 @@ typedef struct {
 
 // init and shutdown.
 risp_t *risp_init(risp_t *risp);
-void risp_shutdown(risp_t *risp);
+risp_t *risp_shutdown(risp_t *risp);
 
 void risp_flush(risp_t *risp);
 void risp_clear(risp_t *risp, risp_command_t command);
