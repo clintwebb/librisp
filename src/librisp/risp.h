@@ -22,8 +22,8 @@
 
 
 
-#define RISP_VERSION 0x00020300
-#define RISP_VERSION_NAME "v2.03.00"
+#define RISP_VERSION 0x00020400
+#define RISP_VERSION_NAME "v2.04.00"
 
 
 #define RISP_MAX_USER_CMD    256
@@ -72,8 +72,8 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t length, const
 // these functions should be converted to macro's or inlined somehow to improve efficiency.
 int risp_isset(risp_t *risp, risp_command_t command);
 int risp_getvalue(risp_t *risp, risp_command_t command);
-unsigned int risp_getlength(risp_t *risp, risp_command_t command);
-char * risp_getdata(risp_t *risp, risp_command_t command);
+risp_length_t risp_getlength(risp_t *risp, risp_command_t command);
+risp_data_t * risp_getdata(risp_t *risp, risp_command_t command);
 char * risp_getstring(risp_t *risp, risp_command_t command);
 
 #endif

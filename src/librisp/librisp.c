@@ -12,7 +12,7 @@
 #include <assert.h>
 
 
-#if (RISP_VERSION != 0x00020300)
+#if (RISP_VERSION != 0x00020400)
 #error "Incorrect header version.  code and header versions must match."
 #endif
 
@@ -413,7 +413,7 @@ int risp_getvalue(risp_t *risp, risp_command_t command)
 	return(risp->commands[command].value);
 }
 
-unsigned int risp_getlength(risp_t *risp, risp_command_t command)
+risp_length_t risp_getlength(risp_t *risp, risp_command_t command)
 {
 	assert(risp);
 	assert(command >= 160 && command <= 255);
@@ -424,7 +424,7 @@ unsigned int risp_getlength(risp_t *risp, risp_command_t command)
 }
 
 
-char * risp_getdata(risp_t *risp, risp_command_t command)
+risp_data_t * risp_getdata(risp_t *risp, risp_command_t command)
 {
 	assert(risp);
 	assert(command >= 160 && command <= 255);
