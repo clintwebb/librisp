@@ -7,9 +7,10 @@
 #endif
 
 
-
 #include <assert.h>
 #include <string.h>
+
+/***** Legacy functionality. *****/
 
 void addCmd(expbuf_t *buf, const risp_command_t cmd)
 {
@@ -166,5 +167,82 @@ void addCmdLargeStr(expbuf_t *buf, const risp_command_t cmd, const risp_length_t
 	*ptr++ = (unsigned char) length & 0xff;
 	memmove(ptr, data, length);
 	buf->length += needed;
+}
+
+
+/***** interface functions *****/
+
+
+void rispbuf_addCmd(expbuf_t *buf, const risp_command_t cmd)
+{
+	assert(buf && cmd >= 0 && cmd <= 63);
+	expbuf_add(buf, &cmd, 1);
+}
+
+
+void rispbuf_addInt(expbuf_t *buf, const risp_command_t cmd, const risp_int_t value)
+{
+	char tmp[5];
+	int len;
+	
+	assert(buf && cmd >= 64 && cmd <= 159);
+
+	tmp[0] = cmd;
+	
+	if (cmd < 96) {
+		tmp[1] = (unsigned char) value & 0xff;
+		len = 2;
+	}
+	else if (cmd < 128) {
+		tmp[1] = (unsigned char) (value >> 8) & 0xff;
+		tmp[2] = (unsigned char) value & 0xff;
+		len = 3;
+	}
+	else {
+		tmp[1] = (unsigned char) (value >> 24) & 0xff;
+		tmp[2] = (unsigned char) (value >> 16) & 0xff;
+		tmp[3] = (unsigned char) (value >> 8) & 0xff;
+		tmp[4] = (unsigned char) value & 0xff;
+		len = 5;
+	}
+	expbuf_add(buf, tmp, len);
+}
+
+
+void rispbuf_addStr(expbuf_t *buf, const risp_command_t cmd, const risp_length_t length, const char *data) 
+{
+	char tmp[5];
+	int len;
+	
+	assert(buf && cmd >= 160 && cmd <= 255);
+	
+	tmp[0] = cmd;
+	if (cmd < 192) {
+		tmp[1] = (unsigned char) length & 0xff;
+		len = 2;
+	}
+	else if (cmd < 224) {
+		tmp[1] = (unsigned char) (length >> 8) & 0xff;
+		tmp[2] = (unsigned char) length & 0xff;
+		len = 3;
+	}
+	else {
+		tmp[1] = (unsigned char) (length >> 24) & 0xff;
+		tmp[2] = (unsigned char) (length >> 16) & 0xff;
+		tmp[3] = (unsigned char) (length >> 8) & 0xff;
+		tmp[4] = (unsigned char) length & 0xff;
+		len = 5;
+	}
+	expbuf_add(buf, tmp, len);
+	expbuf_add(buf, data, length);
+}
+
+
+
+
+void rispbuf_addBuffer(expbuf_t *buf, const risp_command_t cmd, expbuf_t *src) 
+{
+	assert(buf && cmd >= 160 && src);
+	rispbuf_addStr(buf, cmd, BUF_LENGTH(src), BUF_DATA(src));
 }
 

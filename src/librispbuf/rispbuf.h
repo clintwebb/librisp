@@ -16,6 +16,10 @@ void addCmdShortStr(expbuf_t *buf, const risp_command_t cmd, const risp_length_t
 void addCmdStr(     expbuf_t *buf, const risp_command_t cmd, const risp_length_t length, const char *data);
 void addCmdLargeStr(expbuf_t *buf, const risp_command_t cmd, const risp_length_t length, const char *data);
 
+void rispbuf_addCmd(expbuf_t *buf, const risp_command_t cmd);
+void rispbuf_addInt(expbuf_t *buf, const risp_command_t cmd, const risp_int_t value);
+void rispbuf_addStr(expbuf_t *buf, const risp_command_t cmd, const risp_length_t length, const char *data);
+void rispbuf_addBuffer(expbuf_t *buf, const risp_command_t cmd, expbuf_t *src);
 
 
 #endif
