@@ -1,3 +1,10 @@
 *~
 *.o
 *.so.*
+src/examples/bench
+src/examples/risp_client
+src/examples/risp_local
+src/examples/risp_server
+src/examples/struct_client
+src/examples/struct_server
+src/rfx/rfxd
