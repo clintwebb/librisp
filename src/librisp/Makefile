@@ -1,8 +1,17 @@
 ## make file for librisp.
 
-all: librisp.so.1.0.1
 
 ARGS=
+DESTDIR=
+MAINFILE=librisp.so
+LIBVER=1.0.1
+LIBFILE=$(MAINFILE).$(LIBVER)
+SONAME=$(MAINFILE).1
+LIBDIR=$(DESTDIR)/usr/lib
+INCDIR=$(DESTDIR)/usr/include
+
+all: $(LIBFILE)
+
 
 # Need to be able to make 'man-pages' as well.  Not sure where to get the source for those... 
 
@@ -15,19 +24,18 @@ librisp.a: librisp.o
 	ar -r $@
 	ar -r $@ $^
 
-librisp.so.1.0.1: librisp.o
-	gcc -shared -Wl,-soname,librisp.so.1 -o librisp.so.1.0.1 librisp.o
+$(LIBFILE): librisp.o
+	gcc -shared -Wl,-soname,$(SONAME) -o $@ $^
 	
 
-install: librisp.so.1.0.1 risp.h
-	@-test -e /usr/include/risp.h && rm /usr/include/risp.h
-	cp risp.h /usr/include/
-	cp librisp.so.1.0.1 /usr/lib/
-	@-test -e /usr/include/librisp.h && rm /usr/include/librisp.h
-	@-test -e /usr/lib/librisp.so && rm /usr/lib/librisp.so
-	ln -s /usr/lib/librisp.so.1.0.1 /usr/lib/librisp.so
-	ldconfig
-	@echo "Install complete."
+install: $(LIBFILE)
+	cp $(LIBFILE) $(LIBDIR)/
+	@-test -e $(LIBDIR)/$(MAINFILE) && rm $(LIBDIR)/$(MAINFILE)
+	ln -s $(LIBDIR)/$(LIBFILE) $(LIBDIR)/$(MAINFILE)
+
+
+install_dev: risp.h
+	cp risp.h $(INCDIR)/
 
 clean:
 	@-[ -e librisp.o ] && rm librisp.o
