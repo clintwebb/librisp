@@ -583,7 +583,7 @@ void cmdOffset(node_t *ptr, risp_int_t value)
 // This callback function is fired when we receive the CMD_URL command.  We 
 // dont need to actually do anything productive with this, other than storing 
 // the information into some internal variable.
-void cmdFile(node_t *ptr, risp_length_t length, risp_char_t *data)
+void cmdFile(node_t *ptr, risp_length_t length, void *data)
 {
 	char filename[256];
 	
@@ -604,7 +604,7 @@ void cmdFile(node_t *ptr, risp_length_t length, risp_char_t *data)
 	printf("node:%d FILE \"%s\"\n", ptr->handle, filename);
 }
 
-void cmdData(node_t *ptr, risp_length_t length, risp_char_t *data)
+void cmdData(node_t *ptr, risp_length_t length, void *data)
 {
 	assert(ptr != NULL);
 	assert(length >= 0);
@@ -1244,6 +1244,7 @@ int main(int argc, char **argv)
 				settings->storepath = optarg;
 				assert(settings->storepath != NULL);
 				assert(settings->storepath[0] != '\0');
+				break;
 			case 'u':
 				assert(settings->username == NULL);
 				settings->username = optarg;

@@ -17,7 +17,7 @@ bufadd.o: bufadd.c bufadd.h
 	gcc -c -o $@ bufadd.c $(ARGS)
 
 rfx-common.o: rfx-common.c rfx-common.h
-	gcc -c -o $@ rfc-common.c $(ARGS)
+	gcc -c -o $@ rfx-common.c $(ARGS)
 
 
 clean:

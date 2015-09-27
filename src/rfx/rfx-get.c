@@ -29,7 +29,7 @@
 
 static int sigtrap = 0;
 
-
+#define INVALID_HANDLE -1
 
 
 // The node structure.  This should be modified to fit your needs, but there 
@@ -265,7 +265,7 @@ void cmdOffset(node_t *ptr, risp_int_t value)
 // This callback function is fired when we receive the CMD_URL command.  We 
 // dont need to actually do anything productive with this, other than storing 
 // the information into some internal variable.
-void cmdFile(node_t *ptr, risp_length_t length, risp_char_t *data)
+void cmdFile(node_t *ptr, risp_length_t length, void *data)
 {
 	char filename[256];
 	assert(ptr != NULL);
@@ -280,7 +280,7 @@ void cmdFile(node_t *ptr, risp_length_t length, risp_char_t *data)
 
 }
 
-void cmdData(node_t *ptr, risp_length_t length, risp_char_t *data)
+void cmdData(node_t *ptr, risp_length_t length, void *data)
 {
 	assert(ptr != NULL);
 	assert(data != NULL);
