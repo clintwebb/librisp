@@ -14,19 +14,23 @@
 
 <table>
 <thead><tr><td>Range</td><td>Parameter type</td></tr></thead>
-<tr><td>0 to 31</td><td>No param</td></tr>
-<tr><td>32 to 63</td><td>1 byte param</td></tr>
-<tr><td>64 to 95</td><td>2 byte param</td></tr>
+<tr><td>0 to 63</td><td>No param</td></tr>
+<tr><td>64 to 95</td><td>1 byte param</td></tr>
 <tr><td>96 to 127</td><td>4 byte param</td></tr>
-<tr><td>128 to 159</td><td>1 byte length + data</td></tr>
-<tr><td>160 to 191</td><td>2 byte length + data</td></tr>
-<tr><td>192 to 223</td><td>4 byte length + data</td></tr>
-<tr><td>224 to 255</td><td>4 byte length + data</td></tr>
+<tr><td>128 to 159</td><td>8 byte param</td></tr>
+<tr><td>160 to 191</td><td>1 byte length + data (max length - 255 bytes)</td></tr>
+<tr><td>192 to 223</td><td>2 byte length + data (max length - 64kb)</td></tr>
+<tr><td>224 to 255</td><td>4 byte length + data (max length - 4gb)</td></tr>
 </table>
 
 <h2>General Protocol usage</h2>
 <p>The low level protocol describes how each command is represented, but you cant do very much with a single command that only takes one parameter.  The idea is that multiple commands are grouped together to perform an <b>operation</b>.  An operation would generally start with a CLEAR command, followed by some other commands, and finally an EXECUTE command.</p>
 <p>Operations are generally not to do anything until an EXECUTE command is received.  In other words, it gathers information, setting variables and flags.  When an EXECUTE command is received, it looks at the values it has received, and processes them accordingly.</p>
+
+
+<h2>Best Practices</h2>
+
+
 
 <h2>Pipelining operations</h2>
 <p>When a CLEAR command is received, it clears all the flags and variables.  However, a CLEAR command is not absolutely required in all instances.  If you have some operations that need to be performed, where you have a dozen variables that will not change between each operation, you can do a CLEAR, set the variables that wont change, set the variables that will change, send an EXECUTE.  For the next operation, you dont send a CLEAR, but instead only the variables that need to be changed and then send another EXECUTE.</p>
