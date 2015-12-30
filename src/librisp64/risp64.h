@@ -24,11 +24,11 @@
 
 
 /*
-	Version 1.x did not buffer anything.  Instead it only supported callbacks.  
-	With this version, you only need to set a callback for commands that 
-	require an action, otherwise the content of the commands that do not have 
-	callbacks will be stored and retrieved when needed.   The retreival can be 
-	done in a macro, which means that it can be optimised for faster access 
+	Version 1.x did not buffer anything.  Instead it only supported callbacks.
+	With this version, you only need to set a callback for commands that
+	require an action, otherwise the content of the commands that do not have
+	callbacks will be stored and retrieved when needed.   The retreival can be
+	done in a macro, which means that it can be optimised for faster access
 	(normally just a pointer redirection).
 */
 
@@ -44,7 +44,7 @@
 // create the types that we will be using.
 
 typedef unsigned char   risp_command_t;
-typedef unsigned int    risp_length_t;
+typedef unsigned long   risp_length_t;
 typedef long long       risp_int_t;
 typedef unsigned char   risp_data_t;
 
@@ -61,7 +61,7 @@ typedef struct {
 
 		// integer data
 		risp_int_t     value;
-	
+
 	} commands[RISP_MAX_USER_CMD];
 	char created_internally;
 } risp_t;
@@ -83,7 +83,8 @@ void risp_clear_all(risp_t *risp);
 // setup of callback commands
 void risp_add_command(risp_t *risp, risp_command_t command, void *callback);
 
-// providing data that needs to be processed and sent to the callback commands.  Will return the number of bytes that were processed.
+// providing data that needs to be processed and sent to the callback commands.  
+// Will return the number of bytes that were processed.
 risp_length_t risp_process(risp_t *risp, void *base, risp_length_t length, const void *data);
 
 // these functions should be converted to macro's or inlined somehow to improve efficiency.
