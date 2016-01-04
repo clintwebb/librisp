@@ -8,3 +8,5 @@ src/examples/risp_server
 src/examples/struct_client
 src/examples/struct_server
 src/rfx/rfxd
+src/librisp64/librisp64-*.tar.gz
+
