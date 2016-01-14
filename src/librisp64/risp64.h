@@ -23,15 +23,29 @@
 #define __LIBRISP64_H
 
 
-/*
-	Version 1.x did not buffer anything.  Instead it only supported callbacks.
-	With this version, you only need to set a callback for commands that
-	require an action, otherwise the content of the commands that do not have
-	callbacks will be stored and retrieved when needed.   The retreival can be
-	done in a macro, which means that it can be optimised for faster access
-	(normally just a pointer redirection).
+/* 
+ * Version 3.0 
+ * 
+ * Major change to the base protocol mappings to support 64-bit data, and restructure to provide 
+ * more large-string parameters.   
+ * 
+ * Functions are now provided to apply commands to a buffer.  This was previously handled 
+ * externally, but it makes more sense to have it built in.
 */
 
+/*
+ * Version 2.0
+ * 
+ * Version 1.x did not buffer anything.  Instead it only supported callbacks. With this version, you 
+ * only need to set a callback for commands that require an action, otherwise the content of the 
+ * commands that do not have callbacks will be stored and retrieved when needed.   The retreival can 
+ * be done in a macro, which means that it can be optimised for faster access (normally just a 
+ * pointer redirection).
+*/
+
+/*
+ * Version 1.0
+*/
 
 
 #define RISP_VERSION 0x00030000
