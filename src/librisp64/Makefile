@@ -5,9 +5,10 @@ PRODUCT=risp64
 LIBVER=1.0.0
 SOVER=2
 DESTDIR=
+WORKDIR=.
 
 # Docker build envs.
-DOCKER_BUILD_IMAGE=hypersys/build:1.0
+DOCKER_BUILD_IMAGE=hypersys/librisp-build:1.0
 DOCKER_RUN=docker
 DOCKER_NAME=librisp-build
 
@@ -24,50 +25,70 @@ SONAME=$(MAINFILE).$(SOVER)
 LIBDIR=$(DESTDIR)/usr/lib
 INCDIR=$(DESTDIR)/usr/include
 
-all: $(LIBFILE)
-package: $(LIBNAME)-$(LIBVER).tar.gz
+all: $(WORKDIR)/$(LIBFILE)
+package: $(WORKDIR)/$(LIBNAME)-$(LIBVER).tar.gz
 docker-build: docker_build
+src: $(WORKDIR)/$(LIBNAME)-src-$(LIBVER).tar.gz
+
 
 # Need to be able to make 'man-pages' as well.  Not sure where to get the source for those... 
 
-$(LIBNAME).o: $(SRCFILE) $(INCFILE)
+$(WORKDIR)/$(LIBNAME).o: $(SRCFILE) $(INCFILE)
+	@echo "Making: $@"
+	@-[ -d $(WORKDIR) ] || mkdir $(WORKDIR)
 	gcc -c -fPIC $(SRCFILE) -o $@ $(ARGS)
+	@ls -al $(WORKDIR)
 
-$(LIBNAME).a: $(LIBNAME).o
+$(WORKDIR)/$(LIBNAME).a: $(WORKDIR)/$(LIBNAME).o
+	@echo "Making: $@"
+	@-[ ! -d $(WORKDIR) ] && mkdir $(WORKDIR)
 	@>$@
 	@rm $@
 	ar -r $@
 	ar -r $@ $^
+	@ls -al $(WORKDIR)
 
-$(LIBFILE): $(LIBNAME).o
+$(WORKDIR)/$(LIBFILE): $(WORKDIR)/$(LIBNAME).o
+	@echo "Making: $@"
+	@-[ -d $(WORKDIR) ] || mkdir $(WORKDIR)
 	gcc -shared -Wl,-soname,$(SONAME) -o $@ $^
+	@ls -al $(WORKDIR)
 
 
-	
-	
-$(LIBNAME)-$(LIBVER).tar.gz: $(LIBFILE) $(INCFILE) $(LIBNAME).o
+$(WORKDIR)/$(LIBNAME)-src-$(LIBVER).tar.gz: $(SRCFILE) $(INCFILE) Makefile
+	@echo "Making: $@"
+	@-[ ! -d $(WORKDIR) ] && mkdir $(WORKDIR)
 	@-[ -e $@ ] && rm $@
 	tar zcf $@ $^
+	@ls -al $(WORKDIR)
+
+$(WORKDIR)/$(LIBNAME)-$(LIBVER).tar.gz: $(WORKDIR)/$(LIBFILE) $(INCFILE) $(LIBNAME).o
+	@echo "Making: $@"
+	@-[ ! -d $(WORKDIR) ] && mkdir $(WORKDIR)
+	@-[ -e $@ ] && rm $@
+	tar zcf $@ $^
+	@ls -al $(WORKDIR)
 
 
 docker_build: $(SRCFILE) $(INCFILE)
-	$(DOCKER_RUN) pull $(DOCKER_BUILD_IMAGE)
+	@echo "Making: $@"
+	# $(DOCKER_RUN) pull $(DOCKER_BUILD_IMAGE)
 	-$(DOCKER_RUN) kill $(DOCKER_NAME)
 	-$(DOCKER_RUN) rm $(DOCKER_NAME)
-	$(DOCKER_RUN) run --name=$(DOCKER_NAME) -v $(PWD):/build $(DOCKER_BUILD_IMAGE) package
-	$(DOCKER_RUN) cp $(DOCKER_NAME):/build/$(LIBNAME)-$(LIBVER).tar.gz .
+	$(DOCKER_RUN) run --name=$(DOCKER_NAME) -v $(PWD):/build:ro $(DOCKER_BUILD_IMAGE) package
+	$(DOCKER_RUN) cp $(DOCKER_NAME):/out/$(LIBNAME)-$(LIBVER).tar.gz .
 	$(DOCKER_RUN) rm $(DOCKER_NAME)
 
 
-install: $(LIBFILE)
-	cp $(LIBFILE) $(LIBDIR)/
+install: $(WORKDIR)/$(LIBFILE)
+	cp $(WORKDIR)/$(LIBFILE) $(LIBDIR)/
 	@-test -e $(LIBDIR)/$(MAINFILE) && rm $(LIBDIR)/$(MAINFILE)
 	ln -s $(LIBDIR)/$(LIBFILE) $(LIBDIR)/$(MAINFILE)
 
 	
 
-install_dev: $(PRODUCT).h
-	cp risp.h $(INCDIR)/
+install_dev: $(INCFILE)
+	cp $(INCFILE) $(INCDIR)/
 
 
 uninstall: 
@@ -75,6 +96,5 @@ uninstall:
 	@-test -e $(LIBDIR)/$(MAINFILE) && rm $(LIBDIR)/$(MAINFILE)
 
 clean:
-	@-[ -e $(LIBNAME).o ] && rm $(LIBNAME).o
-	@-[ -e $(LIBNAME).so* ] && rm $(LIBNAME).so*
-	@-[ -e .docker_build.touchfile ] && rm .docker_build.touchfile
+	@-[ -e $(WORKDIR)/$(LIBNAME).o ] && rm $(WORKDIR)/$(LIBNAME).o
+	@-[ -e $(WORKDIR)/$(LIBNAME).so* ] && rm $(WORKDIR)/$(LIBNAME).so*
