@@ -1,17 +1,78 @@
+----------------------------------------------------------------------------------------------------
+WHAT IS THIS LIBRARY?
+
 This library will provide the low-level interraction for the protocol.  It will not handle the transport, or the events system.  Instead it will merely accumulate the data from a handle, and then fire off data to call-back functions when it has enough.
 
+----------------------------------------------------------------------------------------------------
+WHAT IS RISP?
 
-Parameter types
+Reduced Instruction Set Protocol follows a similar philosophy as RISC for CPU's.   This philosophy generally follows that a data protocol should be made up of smaller very simple operations.  When put together, they can perform complicated operations.  Many of these simple operations could be something small like "Store this data in a variable", and another operation could be "Perform some operation using the data stored in a particular variable"
 
-0 to 31			No param
-32 to 63		1 byte param
-64 to 95		2 byte param
-96 to 127		4 byte param
-128 to 159	1 byte length + data
-160 to 191	2 byte length + data
-192 to 223	4 byte length + data
+A psuedo representation of a complex operation made up of smaller operations might be.
 
-224	to 255	4 byte length + data [ reserved ]
+	USERNAME <string>
+	PASSWORD <string>
+	LOGIN
+
+The above example is 3 seperate operations when put together perform a single complex operation.  The USERNAME operation would simply store that value in a Username variable for the session.  The PASSWORD operation would do a similar thing, just store the value.  The LOGIN command though, triggers some activity where it looks at the Username and Password values that were stored for the session and does something with it, returning a result.
+
+----------------------------------------------------------------------------------------------------
+BREAKDOWN OF BINARY PROTOCOL
+
+Each operation is made up of a Command, an optional Integer, followed by an optional binary stream.  
+The command is a 2-byte integer (network-byte-ordered).
+The high-byte of the command is a bitmask which indicates what kind of data will follow the command.
+
+The first bit (highest bit) will indicate if the parameter is a string or not.  0 indicating that the parameter is an integer.  1 indicating that the parameter will be an integer length, followed by how ever many bytes was it indicated.
+
+The remaining 7 bits of the first byte in the command, will indicate how many bytes that next param will be.  
+
+   0 0000000 - indicates a non-param command.
+   0 0000001 - indicates a 1-byte integer follows. 
+   0 0000010 - indicates a 2-byte integer follows.
+   0 0000100 - indicates a 4-byte integer follows.
+   0 0001000 - indicates an 8-byte integer follows.
+   1 0000000 - Could also indicate a non-param command.
+   1 0000001 - indicates a string, where a 1-byte length follows, and then x bytes. 
+   1 0000010 - indicates a string, where 2-byte length follows, then x bytes.
+   1 0000100 - indicates a string, where 4-byte length follows, then x bytes.
+
+And so on.
+
+Represented another way.
+
+   A single command with no params.
+      0000 0000 - first byte indicates a command with no params.
+      1010 0011 - command 163
+
+   A command that has a 2-byte integer.
+      0000 0010 - first byte indicates param will be a 2-byte int.
+      1010 0011 - command 163
+      0011 0100 - byte one of the integer param
+      1000 0001 - byte two of the integer param, which together becomes 13441
+
+   A command that has a 2-byte length string.
+      1000 0010 - first byte indicates param will be 2-byte length string.
+      1010 0011 - command 163
+      0000 0000 - byte one of the string length.
+      0000 0011 - byte two of the string length.
+                          result is 3, meaning the string is 3 bytes long, to follow.
+      1011 0011 - byte one of 3-byte string
+      0101 1100 - byte two of 3-byte string
+      1110 0001 - byte three of 3-byte string.
+
+
+The official library will only support certain bits as valid, as it will only be able to support certain lengths.  It might not make sense to use parameters with a 24-bit integer for example (which might make sense actually).  The protocol itself wont bar the use of such, but the implementation will likely cause a fault to indicate that the data stream is corrupt, if it finds bits set where it doesn't expect them. Otherwise, in theory, this also means you could implement it where you have a command with a 128 byte integer parameter to follow.  Who could possibly use a 128-byte integer anyway?
+
+However, you could be fancy, and use a 16-byte integer parameter, that when received gets broken up into two separate 8-byte params... therefore allowing you to send multiple parameters in a single command.  Which... actually goes against the principles of RISP, but there is nothing really stopping you from doing it, other than implementation.
+
+This is hopefully a little easier to understand than the previous version of the protocol which was similar, but much more compressed.
+
+The main disadvantage is that if you are using the protocol primarily for commands that use very small numbers or strings, then it will use slightly more bandwidth (an extra byte for each command).
+
+So there are now multiple ranges of only 256 different commands.... for each different parameter type to follow.   This means you can have 256 different commands in your protocol that use a single 16-bit integer as a parameter.  This doesn't sound like a lot, but after implementing multiple protocols using RISP, I discovered that most protocols only end up with a small limited number of commands anyway.   It would be a very complicated protocol indeed, that needs more than 256 commands for each param type.
+
+There are ways to expand the commands used also, that are quite easy, by nesting unique command-sets within other command-sets.  So there really is no constraint there.
 
 
 
@@ -33,7 +94,7 @@ This means that the processing becomes more complicated, but hopefully is faster
 The fully-callback oriented system could process about 150mb of data per second, with almost 1 million operations per second being processed.  This new system should be able to do twice that amount of data.
 
  ***  After thinking about how to implement this, I have determined that what 
- ***  little CPU is saved as each command comes in, which be lost (and some) 
+ ***  little CPU is saved as each command comes in, would be lost (and some) 
  ***  when trying to process the EXECUTE command.  Because it would have to 
  ***  loop through the data structures provided (256 times actually) to 
  ***  determine what commands have been received and what needs to be processed.   
