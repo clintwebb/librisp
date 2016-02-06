@@ -238,4 +238,178 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, const vo
 
 
 
+// to assist with knowing how much space a command will need to be reserved for a buffer, this 
+// function will tell you how many bytes the command will use.
+risp_length_t risp_command_length(risp_command_t command, risp_length_t dataLength)
+{
+	risp_length_t length = 0;
+
+	assert(dataLength >= 0);
+
+	unsigned char style = (command >> (8+(8-5)));
+	
+	// start with the size of the command id.
+	length = 2;
+	
+	// the lowest 4 bits are the length of the integer part.
+	unsigned int int_len = (style & 0xFF);
+	length += int_len;
+	
+	// if there was an integer part, AND it is also a string, then we need to add the dataLength part. 
+	if (int_len > 0 && (style & 0x100)) {
+		length += dataLength;
+	}
+	
+	assert(length >= 0);
+	return(length);
+}
+
+
+// add an int in network-byte-order (big endian).
+void network_int(void *buffer, risp_int_t value, short int_len) 
+{
+	assert(buffer);
+	assert(int_len > 0);
+	
+	short added = 0;
+	unsigned char *ptr = buffer;
+
+	int i, skip;
+	for (i=0,skip=int_len-1; i<(int_len-1); i++,skip--) {
+		assert(skip > 0); 
+		*ptr = (unsigned char) ((value >> (8*skip)) & 0xf); 
+		ptr++; added++;
+	}
+	
+	// now add the final byte
+	*ptr = (unsigned char) (value & 0xf);
+	ptr++; added++;
+	
+	assert(added == int_len);
+}
+
+
+
+
+// Returns how many bytes it added to the buffer.  The buffer must be big enough to accept the command.
+risp_length_t risp_addbuf_noparam(void *buffer, risp_command_t command)
+{
+	risp_length_t added = 0;
+
+	assert(sizeof(risp_command_t) == 2);
+	
+	assert(buffer);
+	unsigned char *ptr = buffer;
+
+	unsigned char style = command >> (8+(8-5));
+
+	// first we need to make sure that this command really is an integer command, and not a string.
+	if ((style & 0xf) == 0) {
+
+		network_int(ptr, command, sizeof(risp_command_t));
+		ptr += sizeof(risp_command_t);
+		added += sizeof(risp_command_t);
+		
+		assert(added == sizeof(risp_command_t));
+	}
+	
+	assert(added >= 0);
+	return(added);
+}
+
+risp_length_t risp_addbuf_int(void *buffer, risp_command_t command, risp_int_t value)
+{
+	risp_length_t added = 0;
+	
+	assert(buffer);
+	unsigned char *ptr = buffer;
+
+	unsigned char style = command >> (8+(8-5));
+	
+	// first we need to make sure that this command really is an integer command, and not a string.
+	if (((style & 0x10) == 0) && ((style & 0xf) != 0)) {
+		/// command expects an integer parameter.
+
+		int int_len = style & 0xf;
+		assert(int_len > 0);
+		
+		// the max size we can handle is the size of the 'value' param to this function... so we 
+		// will reject anything larger than that.
+		if (int_len > sizeof(value)) {
+			assert(added == 0);
+
+			// the developer probably did something wrong if this fires.
+			assert(0);
+		}
+		else {
+			network_int(ptr, command, sizeof(risp_command_t));
+			ptr += sizeof(risp_command_t);
+			added += sizeof(risp_command_t);
+
+			network_int(ptr, value, int_len);
+			ptr += int_len;
+			added += int_len;
+			
+			assert(added == (sizeof(risp_command_t)+int_len));
+		}
+	}
+	
+	assert(added >= 0);
+	return(added);
+}
+
+
+risp_length_t risp_addbuf_str(void *buffer, risp_command_t command, risp_length_t length, void *data)
+{
+	risp_length_t added = 0;
+	
+	assert(buffer);
+	assert(command != 0);
+	assert(length >= 0);
+	assert(data);
+	
+	unsigned char *ptr = buffer;
+
+	unsigned char style = command >> (8+(8-5));
+	
+	// first we need to make sure that this command really is an integer command, and not a string.
+	if (((style & 0x10) == 1) && ((style & 0xf) != 0)) {
+		/// command expects an integer parameter, followed by data of that length.
+
+		int int_len = style & 0xf;
+		assert(int_len > 0);
+		
+		// the max size we can handle is the size of the 'value' param to this function... so we 
+		// will reject anything larger than that.
+		if (int_len > sizeof(length)) {
+			assert(added == 0);
+
+			// the developer probably did something wrong if this fires.
+			assert(0);
+		}
+		else {
+			network_int(ptr, command, sizeof(risp_command_t));
+			ptr += sizeof(risp_command_t);
+			added += sizeof(risp_command_t);
+
+			network_int(ptr, length, int_len);
+			ptr += int_len;
+			added += int_len;
+	
+			if (length > 0) {
+				memcpy(ptr, data, length);
+				added += length;
+			}
+			
+			assert(added == (sizeof(risp_command_t)+int_len+length));
+		}
+	}
+	
+	assert(added >= 0);
+	return(added);
+}
+
+
+
+
 

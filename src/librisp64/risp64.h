@@ -90,4 +90,15 @@ void risp_add_command(risp_t *risp, risp_command_t command, void *callback);
 risp_length_t risp_process(risp_t *risp, void *base, risp_length_t length, const void *data);
 
 
+// The buffer functions will assist with adding a command to a buffer that is provided. 
+risp_length_t risp_addbuf_noparam(void *buffer, risp_command_t command);
+risp_length_t risp_addbuf_int(void *buffer, risp_command_t command, risp_int_t value);
+risp_length_t risp_addbuf_str(void *buffer, risp_command_t command, risp_length_t length, void *data);
+
+
+// to assist with knowing how much space a command will need to be reserved for a buffer, this 
+// function will tell you how many bytes the command will use.
+risp_length_t risp_command_length(risp_command_t command, risp_length_t length);
+
+
 #endif
