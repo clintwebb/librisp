@@ -52,11 +52,14 @@
 #include <stdint.h>
 
 
-#define RISP_VERSION 0x00030000
-#define RISP_VERSION_NAME "v3.00.00"
+#define RISP_VERSION 0x00030002
+#define RISP_VERSION_NAME "v3.00.02"
 
 // the RISP commands are 16-bit integers.
-#define RISP_MAX_USER_CMD    (2^16)
+#define RISP_MAX_USER_CMD    (0xffff)
+
+
+
 
 ///////////////////////////////////////////
 // create the types that we will be using.
@@ -66,9 +69,14 @@ typedef int_least64_t risp_length_t;
 typedef int_least64_t risp_int_t;
 typedef unsigned char risp_data_t;	// will be used as a pointer.
 
+typedef struct {
+	void *callback;
+} risp_handler_t;
+
 
 typedef struct {
-	void * commands[RISP_MAX_USER_CMD];
+	risp_handler_t commands[RISP_MAX_USER_CMD+1];
+	void * invalid_callback;
 	char created_internally;
 } risp_t;
 
@@ -80,7 +88,8 @@ typedef struct {
 risp_t *risp_init(risp_t *risp);
 risp_t *risp_shutdown(risp_t *risp);
 
-
+// Setup a callback function to be called when an unexpected command is received.
+void risp_add_invalid(risp_t *risp, void *callback);
 
 // setup of callback commands
 void risp_add_command(risp_t *risp, risp_command_t command, void *callback);

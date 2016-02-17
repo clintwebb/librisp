@@ -25,17 +25,17 @@ The high-byte of the command is a bitmask which indicates what kind of data will
 
 The first bit (highest bit) will indicate if the parameter is a string or not.  0 indicating that the parameter is an integer.  1 indicating that the parameter will be an integer length, followed by how ever many bytes was it indicated.
 
-The remaining 7 bits of the first byte in the command, will indicate how many bytes that next param will be.  
+The next 4 bits of the first byte in the command, will indicate how many bytes that next param will be.  
 
-   0 0000000 - indicates a non-param command.
-   0 0000001 - indicates a 1-byte integer follows. 
-   0 0000010 - indicates a 2-byte integer follows.
-   0 0000100 - indicates a 4-byte integer follows.
-   0 0001000 - indicates an 8-byte integer follows.
-   1 0000000 - Could also indicate a non-param command.
-   1 0000001 - indicates a string, where a 1-byte length follows, and then x bytes. 
-   1 0000010 - indicates a string, where 2-byte length follows, then x bytes.
-   1 0000100 - indicates a string, where 4-byte length follows, then x bytes.
+   0 0000 xxxxxxxxxxx - indicates a non-param command.
+   0 0001 xxxxxxxxxxx - indicates a 1-byte integer follows. 
+   0 0010 xxxxxxxxxxx - indicates a 2-byte integer follows.
+   0 0100 xxxxxxxxxxx - indicates a 4-byte integer follows.
+   0 1000 xxxxxxxxxxx - indicates an 8-byte integer follows.
+   1 0000 xxxxxxxxxxx - Could also indicate a non-param command.
+   1 0001 xxxxxxxxxxx - indicates a string, where a 1-byte length follows, and then x bytes. 
+   1 0010 xxxxxxxxxxx - indicates a string, where 2-byte length follows, then x bytes.
+   1 0100 xxxxxxxxxxx - indicates a string, where 4-byte length follows, then x bytes.
 
 And so on.
 

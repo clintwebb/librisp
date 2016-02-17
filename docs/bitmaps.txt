@@ -1,10 +1,29 @@
-0000 0000 = 0
-0000 0001 = 1
-0000 0010 = 2
-0000 0100 = 4
-0000 1000 = 8
-0001 0000 = 16 / 10
-0000 0000 = 0
-0000 0000 = 0
-0000 0000 = 0
-0000 0000 = 0
+
+0000 0
+0001 1
+0010 2
+0011 3
+0100 4
+0101 5
+0110 6
+0111 7
+1000 8
+1001 9
+1010 A
+1011 B
+1100 C
+1101 D
+1110 E
+1111 F
+
+
+Style Ranges
+// No Parameters  - 0x0000 to 0x07ff
+// No Parameters  - 0x8000 to 0x87ff
+// 1 byte integer - 0x0800 to 0x0fff
+// 2 byte integer - 0x1000 to 0x1fff
+// 4 byte integer - 0x2000 to 0x27ff
+// 8 byte integer - 0x4000 to 0x47ff
+// 1 byte string  - 0x8800 to 0x8fff
+// 2 byte string  - 0x9000 to 0x97ff
+// 4 byte string  - 0xa000 to 0xa7ff
