@@ -8,7 +8,7 @@ This chat server has a very simple protocol.
     0x0004  NO_ECHO
 // No Parameters  - 0x8000 to 0x87ff 
 // 1 byte integer - 0x0800 to 0x0fff  ( 8-bit)
-// 2 byte integer - 0x1000 to 0x1fff  (16-bit)
+// 2 byte integer - 0x1000 to 0x17ff  (16-bit)
 // 4 byte integer - 0x2000 to 0x27ff  (32-bit)
 // 8 byte integer - 0x4000 to 0x47ff  (64-bit) 
 // 1 byte string  - 0x8800 to 0x8fff  (max 255 length)
