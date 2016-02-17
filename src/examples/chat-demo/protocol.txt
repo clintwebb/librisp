@@ -1,0 +1,45 @@
+This chat server has a very simple protocol.
+
+// No Parameters  - 0x0000 to 0x07ff
+    0x0000  NOP
+    0x0001  HELLO 
+    0x0002  GOODBYE
+    0x0003  ECHO
+    0x0004  NO_ECHO
+// No Parameters  - 0x8000 to 0x87ff 
+// 1 byte integer - 0x0800 to 0x0fff  ( 8-bit)
+// 2 byte integer - 0x1000 to 0x1fff  (16-bit)
+// 4 byte integer - 0x2000 to 0x27ff  (32-bit)
+// 8 byte integer - 0x4000 to 0x47ff  (64-bit) 
+// 1 byte string  - 0x8800 to 0x8fff  (max 255 length)
+    0x8800  NAME
+// 2 byte string  - 0x9000 to 0x97ff  (max 64k length)
+    0x9000  MESSAGE
+// 4 byte string  - 0xa000 to 0xa7ff  (max 4gb length)
+
+
+
+When the server starts up, it listens on a particular port.
+Clients connect to the server.  Server accepts the connection, but does not send anything immediately.
+Client sends HELLO command. 
+Server replies with HELLO, and session is established.
+
+If the client takes longer than 10 seconds to send the HELLO command, the server will close the connection.
+The client must send a HELLO command before any other command except NOP.  If any other command is received before a HELLO, then the connection will be closed.
+
+The client implementation should also close the connection if it sends a HELLO, but doesn't get an answering HELLO within a reasonable time.
+
+If the client wants to associate a name with the connection (ie, Alice), then it can send a NAME command.  
+Whatever is set as the Name will be remembered for the session.
+
+If the client is servicing multiple people, it can send a NAME command before each MESSAGE command that it sends.
+
+To send a message to all other people watching the chat session, the client sends a MESSAGE command.  All messages sent are relayed on to every client that is connected to the server.  There is no capability of sending a message to a limited group.
+
+The contents of the message, and the Name are then relayed to all other members of the chat.
+
+The client can choose to receive their own messages, or not.  By submitting an ECHO command, it will turn on echoes for that session.  This means that when a client sends a message, it will immediately receive the same message back.
+If the client want to choose not to receive their own messages, it can send a NO_ECHO command.  By default a session will not echo.
+
+When a client wants to disconnect, it has two options.  It can either close the connection, or it can send a GOODBYE command, which will cause the server to close the connection.  Both options are valid.  After sending the GOODBYE command, the client should not send any more data over the connection.
+

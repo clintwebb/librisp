@@ -25,22 +25,21 @@
 #include <assert.h>
 
 
-#if (RISP_VERSION != 0x00030000)
+#include <stdio.h>
+
+#if (RISP_VERSION != 0x00030002)
 #error "Incorrect header version.  code and header versions must match."
 #endif
 
 
-#if (RISP_MAX_USER_CMD > 256)
-#error "Command can only be 1 byte."
-#endif
 
 
 
 
-
-// 'functions' to convert 64-bit longs between host-byte-order and network-byte-order.
-#define htonll(x) ((1==htonl(1)) ? (x) : ((unsigned long long)htonl((x) & 0xFFFFFFFF) << 32) | htonl((x) >> 32))
-#define ntohll(x) ((1==ntohl(1)) ? (x) : ((unsigned long long)ntohl((x) & 0xFFFFFFFF) << 32) | ntohl((x) >> 32))
+// These helper functions should not be needed now.
+// // 'functions' to convert 64-bit longs between host-byte-order and network-byte-order.
+// #define htonll(x) ((1==htonl(1)) ? (x) : ((unsigned long long)htonl((x) & 0xFFFFFFFF) << 32) | htonl((x) >> 32))
+// #define ntohll(x) ((1==ntohl(1)) ? (x) : ((unsigned long long)ntohl((x) & 0xFFFFFFFF) << 32) | ntohl((x) >> 32))
 
 
 //--------------------------------------------------------------------------------------------------
@@ -52,9 +51,9 @@ risp_t *risp_init(risp_t *risp)
 	risp_t *r;
 
 	// Assume some sane type sizes.    
-	assert(sizeof(int) == 4);
 	assert(sizeof(short) == 2);
-	assert(sizeof(long) == sizeof(int));
+	assert(sizeof(int) == 4);
+	// (long) by itself could be either 4 or 8, depending on if it is running on 32-bit or 64-bit system.
 	assert(sizeof(long long) == 8);
 	
 	// The 'commands' are expected to be a 16-bit unsigned integer.
@@ -71,15 +70,17 @@ risp_t *risp_init(risp_t *risp)
 		r->created_internally = 0;
 	}
 	
-	
 	// we could simply memset the entire space, however, for completeness and to make it easier if 
 	// we add structure items later on that require something other than zero.
 	assert(r != NULL);
 	if (r != NULL) {
-		register short i;
+		register unsigned short i;
 		for (i=0; i<RISP_MAX_USER_CMD; i++) {
-			r->commands[i] = NULL;
+			r->commands[i].callback = NULL;
 		}
+
+		// Set the 'invalid' callback to NULL.,  This can be set using risp_add_invalid() function.
+		r->invalid_callback = NULL;
 	}
 	
 	return(r);
@@ -95,7 +96,7 @@ risp_t * risp_shutdown(risp_t *risp)
 	
 	assert(risp != NULL);
 	for (i=0; i<RISP_MAX_USER_CMD; i++) {
-		risp->commands[i] = NULL;
+		risp->commands[i].callback = NULL;
 	}
 	
 	assert(risp->created_internally == 1 | risp->created_internally == 0);
@@ -111,6 +112,19 @@ risp_t * risp_shutdown(risp_t *risp)
 }
 
 
+//--------------------------------------------------------------------------------------------------
+// The invalid callback will be called if a command is received that does not have a callback 
+// listed.  This is to assist with handling issues where unexpected commands are received.  Normally 
+// they should be ignored, but might want to log it or suggest and update, etc.
+// 
+// Passing in a NULL callback essentially disables it.
+void risp_add_invalid(risp_t *risp, void *callback)
+{
+	assert(risp);
+	risp->invalid_callback = callback;
+}
+
+
 //-----------------------------------------------------------------------------
 // Add a command to our tables.  Since we are using an array of function 
 // pointers, risp does not know definitively that the function specified 
@@ -118,14 +132,19 @@ risp_t * risp_shutdown(risp_t *risp)
 // type for the command-style, then it will generally end up with a segfault.
 void risp_add_command(risp_t *risp, risp_command_t command, void *callback) 
 {
+// 	printf("add_cmd: command:%u, max:%lu\n", command, RISP_MAX_USER_CMD);
+	
 	assert(risp != NULL);
 	assert(command >= 0);
 	assert(command < RISP_MAX_USER_CMD);
 	assert(callback != NULL);
 	
-	assert(risp->commands[command] == NULL);
-	risp->commands[command] = callback;
+	assert(risp->commands[command].callback == NULL);
+	risp->commands[command].callback = callback;
 }
+
+
+
 
 
 //--------------------------------------------------------------------------------------------------
@@ -179,7 +198,7 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, const vo
 		short int_len = style & 0xff;
 		
 		if (int_len == 0) {
-			func_nul = risp->commands[cmd];
+			func_nul = risp->commands[cmd].callback;
 			if (func_nul) { (*func_nul)(base); }
 			left -= sizeof(risp_command_t);
 			// dont need to increase the ptr, because there was no parameters.
@@ -207,7 +226,7 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, const vo
 			
 			if (style & 0x10 != 0x10) {
 				// this command is NOT a string, so we have all that we need.
-				func_int = risp->commands[cmd];
+				func_int = risp->commands[cmd].callback;
 				if (func_int) { (*func_int)(base, intvalue); }
 				left -= (sizeof(risp_command_t) + int_len);
 				// dont need to increase the ptr, because that was done when we were reading in the integer.
@@ -221,7 +240,7 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, const vo
 					cont = 0;
 				}
 				else {
-					func_str = risp->commands[cmd];
+					func_str = risp->commands[cmd].callback;
 					if (func_str) (*func_str)(base, intvalue, ptr);
 					ptr += intvalue;
 					left -= (sizeof(risp_command_t) + int_len + intvalue);
