@@ -1,45 +1,235 @@
 This chat server has a very simple protocol.
 
+
+
+----------------------------------------------------------------------------------------------------
+PROTOCOL REQUIREMENTS
+----------------------------------------------------------------------------------------------------
+
+
+  INITIALIZATION
+  --------------
+
+   1.  When the server starts up, it listens on a particular port.
+   2.  Clients connect to the server.
+   3.  Server accepts the connection, but does not send anything immediately.
+   4.  Client sends HELLO("RISP Server") command. 
+   5.  If client sends the correct HELLO ID, Server replies with HELLO_ACK, and session is established.
+   6.  If client sent an invalid HELLO command, Server will drop the connection without sending any response.
+   7.  Default state of a session is NOFOLLOW and NOECHO.
+   8.  If the client takes longer than 10 seconds to send the HELLO command, the server will close 
+       the connection.
+   9.  The client must send a HELLO command before any other command except NOP.
+  10.  If any other command is received before a HELLO (besides NOP), then the connection will be closed.
+  11.  The client implementation should also close the connection if it sends a HELLO, but doesn't get 
+       an answering HELLO within a reasonable time.
+  12.  Client can send a NAME command to set the name for all proceeding messages that are sent.
+
+
+  SENDING MESSAGES
+  ----------------
+
+   1.  If the client wants to associate a name with the connection (ie, "Alice Bogwarts"), then it can send a 
+       NAME command.
+   2.  Whatever is set as the Name will be remembered for the session.
+   3.  If the client is servicing multiple people, it can send a NAME command before each MESSAGE 
+       command that it sends.
+   4.  A NAME command can be sent at any time.  The server will simply remember and use the last one.
+   5.  To send a message to all other people watching the chat session, the client sends a MESSAGE 
+       command.  
+   6.  If a message is sent without a NAME, then it given a NULL name.
+   7.  The client can choose to receive their own messages, or not.  By submitting an ECHO command, 
+       it will turn on echoes for that session.  This means that when a client sends a message, it 
+       will immediately receive the same message back.
+   8.  If the client want to choose not to receive their own messages, it can send a NO_ECHO command.  
+       By default a session will not echo.
+   9.  All messages sent are relayed on to every client that is connected to the server.  There is 
+       no capability of sending a message to a limited group.
+
+ 
+  RECEIVING MESSAGES
+  ------------------
+
+   1.  Clients by default are in NO_FOLLOW mode, where they do not automatically receive every new 
+       message received.  
+   2.  Whenever a new message is posted, clients that are in NOFOLLOW mode (the default)will receive:
+          - LATEST_MSG_ID command
+   3   Whenever a new message is posted, clients that are in FOLLOW mode will receive:
+          - MSG_ID command
+          - NAME command
+          - MESSAGE command
+       Clients should make note of the MSG_ID command, and update its own internal tracking of the 
+       latest message.
+   4.  The client can request a specific message, by sending a SEND_MSG command. 
+   5.  The client can specify to receive all messages since a specific ID by sending the SEND_SINCE 
+       command.  The server will send all the messages since that particular ID.   In other words, 
+       it is saying "the last message I got was XXXX, send every message since then".
+   6.  There is no restriction on the contents of the Name, other than it is 255 characters in 
+       length or less.  It is up to the client to parse it to ensure it can print/handle the 
+       contents of it.
+
+     
+  DISCONNECTING
+  -------------
+   1.  Server will disconnect a client if it has received no activity in a certain time period 
+       (5 minutes).
+   2.  Client can close the connection.
+   3.  Client can send a GOODBYE command which will cause the server to close the connection.
+   4.  After sending the GOODBYE command, the client should not send any more data over the 
+       connection.
+
+
+
+       
+----------------------------------------------------------------------------------------------------
+COMMANDS
+----------------------------------------------------------------------------------------------------
+
 // No Parameters  - 0x0000 to 0x07ff
-    0x0000  NOP
-    0x0001  HELLO 
-    0x0002  GOODBYE
-    0x0003  ECHO
-    0x0004  NO_ECHO
+
+    0x0000  NOP (Bi-directional)
+    
+        Does nothing.  This command can be used for padding by 2 bytes (the size of a command). Not 
+        very practical, and other NOP command sizes could be added to the protocol to add arbitrary 
+        lengths of padding.  Can also be used to keep a connection alive, as any received data 
+        (valid commands or not) will reset the counter.
+    
+    0x0001  HELLO_ACK (Server to Client)
+
+        When the server receives a HELLO command, and it has the correct ID string, it will respond 
+        with an ACK.  There is no HELLO_FAIL, as the server will simply close the connection if it 
+        does not receive the correct ID string.
+    
+    0x0002  GOODBYE (Client to Server)
+    
+        If the client wants to close the connection, it can either close it, or send a GOODBYE 
+        message to the server, and the server will close the connection.  In some cases it is 
+        preferred that the client tells the server to close the connection.  This ensures that there 
+        is no pending data to be received when the close takes place.
+
+    0x0003  ECHO (Client to Server)
+    
+        Puts the session in ECHO mode, where new messages received by the server will be sent to all 
+        the clients, including the client that sent the message.  This is not the default.
+    
+    0x0004  NO_ECHO (Client to Server)
+    
+        Puts the session in NO_ECHO mode, where new messages received by the server will be sent to 
+        all the clients except the one that sent the message.  This is the default mode.
+    
+    0x0005  FOLLOW (Client to Server)
+    
+        Puts the session in FOLLOW mode.  When new messages are received by the server, it will send 
+        the entire message to this client session.  This allows a client to receive the messages in 
+        the most efficient manner.
+    
+    0x0006  NO_FOLLOW (Client to Server)
+    
+        Puts the session in NO_FOLLOW mode (the default), where the client will receive a 
+        LATEST_MSG_ID command when new commands come in, but that only indicates the latest msg ID, 
+        and not the full message.  This allows clients to be aware that there are more messages 
+        pending, but not necessarily receive them.  The client can request particular messages, or 
+        all the messages since a particular ID.
+
+    0x0007  NO_UPDATE (Client to Server)
+
+        Similar to NO_FOLLOW except it also does not send the LATEST_MSG_ID command.  The client, in 
+        order to get updates, will need to send the GET_LATEST_MSG_ID command to find out what the 
+        latest message is.  Clients that only intend to send messages and not receive them might 
+        prefer this mode.
+
+        Clients cannot specifically reset this setting by itself, but FOLLOW will reset it.  
+        NO_UPDATE implies that NO_FOLLOW has also been set.
+
+        NOTE: In this mode, if clients send a message they still get the SENT_MSG_ID command.
+
+    
+    0x0008  GET_LATEST_MSG_ID (Client to Server)
+    
+        Tells the server to send a LATEST_MSG_ID commmand to indicate what the latest msg ID is.  
+        Commonly used when in NO_UPDATE mode to periodically check for new messages.
+    
 // No Parameters  - 0x8000 to 0x87ff 
 // 1 byte integer - 0x0800 to 0x0fff  ( 8-bit)
 // 2 byte integer - 0x1000 to 0x17ff  (16-bit)
 // 4 byte integer - 0x2000 to 0x27ff  (32-bit)
 // 8 byte integer - 0x4000 to 0x47ff  (64-bit) 
+
+    0x4000  MSG_ID (Server to Client)
+
+        ID of a message.  Normally only sent from the Server to the client when it is sending a 
+        message that is being relayed.  
+
+    0x4001  LATEST_MSG_ID (Server to Client)
+
+        ID of the latest message in the system.  Normally sent from the server when the client is in 
+        NO_FOLLOW mode.  Also sent when the client sends a GET_LATEST_MSG_ID command.
+
+    0x4002  SEND_MSG (Client to Server)
+
+        Client sends this command to the server, when asking for a particular message to be sent.  
+        The parameter indicates the message ID that should be sent.
+
+    0x4003  SEND_SINCE (Client to Server)
+
+        Client requests that all messages since a certain msg ID to be sent.   If no messages to be 
+        sent, then server may only send a LATEST_MSG_ID command. 
+
 // 1 byte string  - 0x8800 to 0x8fff  (max 255 length)
-    0x8800  NAME
+
+    0x8800  HELLO (Client to Server)
+
+        Authentication (although admittedly almost non-existant) ensures that the client and server 
+        are attempting to talk correctly.  The string supplied must be "RISP Server".  There is no 
+        version numbers applied, as a properly designed  RISP protocol should not require versioning.  
+        A better solution is to use the Capabilites methodology.
+
+        If the string is incorrect, the server will not respond, but simply close the connection.
+
+        NOTE:  The HELLO command with the supplied string could allow a RISP reverse-proxy to direct 
+               traffic to different responders.  It could simply listen on a socket and when 
+               connections come in, process the HELLO command, and depending on the string, simply 
+               shuffle all following traffic (including the HELLO) to different listeners.
+
+    0x8801  NAME (Bi-directional)
+
+        Sets the name of the message.  When sent from the client, the server will remember the name 
+        for the session.  The client can send it as many times as it wants, and the server will only 
+        remember the last one.  All future messages from the client will be sent with that stored Name.
+        
+        When sent from the Server, it will be sent prior to a Message command that was relayed from 
+        another client.
+        
 // 2 byte string  - 0x9000 to 0x97ff  (max 64k length)
-    0x9000  MESSAGE
+
+    0x9000  MESSAGE  (Bi-directional)
+    
+        When sent from a client, will take that parameter, and pass it (along with the msg ID and 
+        name) to the other clients, depending on their FOLLOW or UPDATE modes.
+
+        When sent from server to client, indicates that a message was received at the server, and 
+        relayed to the client.  Will also be accompanied by a MSG_ID and a NAME command before the 
+        MESSAGE.
+        
+        The MSG_ID can be used to update the ID of the latest message.  
+
+        If the server is sending multiple messages from the same Name, it will only send Name once, 
+        followed by the multiple messages.  Only when messages are being sent from different names, 
+        will those entries also be included.
+    
 // 4 byte string  - 0xa000 to 0xa7ff  (max 4gb length)
 
 
+----------------------------------------------------------------------------------------------------
+PROTOCOL DESIGN CHOICES AND OPTIMISATIONS
+----------------------------------------------------------------------------------------------------
 
-When the server starts up, it listens on a particular port.
-Clients connect to the server.  Server accepts the connection, but does not send anything immediately.
-Client sends HELLO command. 
-Server replies with HELLO, and session is established.
-
-If the client takes longer than 10 seconds to send the HELLO command, the server will close the connection.
-The client must send a HELLO command before any other command except NOP.  If any other command is received before a HELLO, then the connection will be closed.
-
-The client implementation should also close the connection if it sends a HELLO, but doesn't get an answering HELLO within a reasonable time.
-
-If the client wants to associate a name with the connection (ie, Alice), then it can send a NAME command.  
-Whatever is set as the Name will be remembered for the session.
-
-If the client is servicing multiple people, it can send a NAME command before each MESSAGE command that it sends.
-
-To send a message to all other people watching the chat session, the client sends a MESSAGE command.  All messages sent are relayed on to every client that is connected to the server.  There is no capability of sending a message to a limited group.
-
-The contents of the message, and the Name are then relayed to all other members of the chat.
-
-The client can choose to receive their own messages, or not.  By submitting an ECHO command, it will turn on echoes for that session.  This means that when a client sends a message, it will immediately receive the same message back.
-If the client want to choose not to receive their own messages, it can send a NO_ECHO command.  By default a session will not echo.
-
-When a client wants to disconnect, it has two options.  It can either close the connection, or it can send a GOODBYE command, which will cause the server to close the connection.  Both options are valid.  After sending the GOODBYE command, the client should not send any more data over the connection.
-
+  1.  We have multiple commands that deal with a MSG_ID.   We could have used a single command to 
+      set the message ID, and then have an additional command that tells the server what to do with 
+      that command.  And technically that is the proper RISP way.  However, there are certain 
+      optimisations that can help speed up processing.  Doing it the way just mentioned, would 
+      result in TWO callback methods being called.  Since this protocol is fairly small and 
+      uncomplicated, then we can optimise slightly by having a single command with an ID parameter 
+      that includes the ID being processed, and the command operation.   This only really applies 
+      with simply protocols that really only deal with a single key element (in this case the 
+      message ID).
