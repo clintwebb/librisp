@@ -144,6 +144,70 @@ void risp_add_command(risp_t *risp, risp_command_t command, void *callback)
 }
 
 
+static void log_data(char *tag, unsigned char *data, int length)
+{
+	int i;
+	int col;
+	char buffer[512];	// line buffer.
+	int len;  			// buffer length;
+	int start;
+	
+	assert(tag);
+	assert(data);
+	assert(length > 0);
+
+	i = 0;
+	while (i < length) {
+
+		start = i;
+		
+		// first put the tag in the buffer.
+		strncpy(buffer, tag, sizeof(buffer));
+		len = strlen(tag);
+		
+		// now put the line count.
+		len += sprintf(buffer+len, "%04X: ", i);
+		
+		// now display the columns of text.
+		for (col=0; col<16; col++) {
+			if (i < length && col==7) {
+				len += sprintf(buffer+len, "%02x-", data[i]);
+			}
+			else if (i < length) {
+				len += sprintf(buffer+len, "%02x ", data[i]);
+			}
+			else {
+				len += sprintf(buffer+len, "   ");
+			}
+			
+			i++;
+		}
+		
+		// add a seperator
+		len += sprintf(buffer+len, ": ");
+		
+		// now we display the plain text.
+		assert(start >= 0);
+		for (col=0; col<16; col++) {
+			if (start < length) {
+				if (isprint(data[start])) {
+					len += sprintf(buffer+len, "%c", data[start]);
+				}
+				else {
+					len += sprintf(buffer+len, ".");
+				}
+			}
+			else {
+				len += sprintf(buffer+len, " ");
+			}
+			
+			start++;
+		}
+
+		assert(i == start);
+		printf("%s\n", buffer);
+	}
+}
 
 
 
@@ -177,25 +241,29 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, const vo
 	int cont = 1;
 	while(cont != 0 && left >= 2) {
 
+// 		log_data("IN: ", ptr, left);
+		
 		// Each command in the protocol is made up of two parts, the style bitmap, and the 
 		// command id.  Together they make up a command in the protocol, but since we will be 
 		// seperating them anyway, we might as well pull them out together.
 
-		// the first byte also contains the style bits, so we will keep that first.
-		unsigned char style = *ptr;
-		ptr ++;
+		risp_command_t cmd = ptr[0];	// add the first byte
+		cmd <<= 8;	// shift it into position.
+		cmd |= ptr[1];
 		
-		// add the style part we already got to the first byte in the command, and then add the 
-		// second byte.
-		risp_command_t cmd = (((short)style) << 8) | *ptr;
-		ptr ++;
-
+		ptr += 2;
+		
+// 		printf("RISP: Command received: 0x%llx\n", cmd);
 		// get rid of the bits from style we dont want when checking it.  Note that the style bits 
 		// make up the first 5 bits.
-		style = style >> (8-5);
+		unsigned char style = cmd >> 11;
+		
+// 		printf("RISP: Style: 0x%llx\n", style);
 
-		// get the length of the integer part of our command (if there is one).
-		short int_len = style & 0xff;
+		// get the length of the integer part of our command (if there is one), by simply stripping off the string-bit.
+		short int_len = style & 0xf;
+// 		printf("RISP: int_len=%d\n", int_len);
+		assert(int_len < 16);
 		
 		if (int_len == 0) {
 			func_nul = risp->commands[cmd].callback;
@@ -284,25 +352,31 @@ risp_length_t risp_command_length(risp_command_t command, risp_length_t dataLeng
 }
 
 
-// add an int in network-byte-order (big endian).
-void network_int(void *buffer, risp_int_t value, short int_len) 
+// add an integer of an arbitrary length (up to 64-bit) in network-byte-order (big endian).
+void network_int(unsigned char *buffer, risp_int_t value, short int_len) 
 {
 	assert(buffer);
 	assert(int_len > 0);
 	
 	short added = 0;
-	unsigned char *ptr = buffer;
 
-	int i, skip;
+// 	printf("Network Int: value=%llx, len=%d\n", value, int_len);
+// 	if (int_len == 2) {
+// 		printf("htons: host=%llx, net=%llx\n", value, htons(value));
+// 	}
+	
+	register int i, skip;
 	for (i=0,skip=int_len-1; i<(int_len-1); i++,skip--) {
 		assert(skip > 0); 
-		*ptr = (unsigned char) ((value >> (8*skip)) & 0xf); 
-		ptr++; added++;
+		unsigned char conv = ((value >> (8*skip)) & 0xff);
+// 		printf("Adding 0x%X, skip=%d\n", conv, skip);
+		buffer[i] = conv; 
+		added++;
 	}
 	
 	// now add the final byte
-	*ptr = (unsigned char) (value & 0xf);
-	ptr++; added++;
+	buffer[i] = (unsigned char) (value & 0xf);
+	added++;
 	
 	assert(added == int_len);
 }
@@ -331,8 +405,12 @@ risp_length_t risp_addbuf_noparam(void *buffer, risp_command_t command)
 		
 		assert(added == sizeof(risp_command_t));
 	}
+	else {
+		// a command of an invalid type must have been selected.  
+		assert(0);
+	}
 	
-	assert(added >= 0);
+	assert(added > 0);
 	return(added);
 }
 
@@ -343,13 +421,15 @@ risp_length_t risp_addbuf_int(void *buffer, risp_command_t command, risp_int_t v
 	assert(buffer);
 	unsigned char *ptr = buffer;
 
-	unsigned char style = command >> (8+(8-5));
+	// this code assumes that the command is a 2-byte (16-bit) value.
+	assert(sizeof(risp_command_t) == 2);
 	
 	// first we need to make sure that this command really is an integer command, and not a string.
-	if (((style & 0x10) == 0) && ((style & 0xf) != 0)) {
+	if (((command & 0x8000) == 0) && ((command & 0x7800) != 0)) {
 		/// command expects an integer parameter.
 
-		int int_len = style & 0xf;
+		// get the length out of the command-id.
+		int int_len = (command & 0x7800) >> 11;
 		assert(int_len > 0);
 		
 		// the max size we can handle is the size of the 'value' param to this function... so we 
@@ -372,8 +452,12 @@ risp_length_t risp_addbuf_int(void *buffer, risp_command_t command, risp_int_t v
 			assert(added == (sizeof(risp_command_t)+int_len));
 		}
 	}
-	
-	assert(added >= 0);
+	else {
+		// a command of an invalid type must have been selected.  
+		assert(0);
+	}
+
+	assert(added > 0);
 	return(added);
 }
 
@@ -389,13 +473,15 @@ risp_length_t risp_addbuf_str(void *buffer, risp_command_t command, risp_length_
 	
 	unsigned char *ptr = buffer;
 
-	unsigned char style = command >> (8+(8-5));
+	// this code assumes that a command is 2 bytes in length (16-bit).
+	assert(sizeof(risp_command_t) == 2);
 	
-	// first we need to make sure that this command really is an integer command, and not a string.
-	if (((style & 0x10) == 1) && ((style & 0xf) != 0)) {
+	// first we need to make sure that this command really is a string and not something invalid..
+	if (((command & 0x8000) != 0) && ((command & 0x7800) != 0)) {
+		
 		/// command expects an integer parameter, followed by data of that length.
 
-		int int_len = style & 0xf;
+		int int_len = (command & 0x7800) >> 11;
 		assert(int_len > 0);
 		
 		// the max size we can handle is the size of the 'value' param to this function... so we 
@@ -407,6 +493,9 @@ risp_length_t risp_addbuf_str(void *buffer, risp_command_t command, risp_length_
 			assert(0);
 		}
 		else {
+			assert(added == 0);
+			assert(sizeof(risp_command_t) == 2);
+			assert(ptr);
 			network_int(ptr, command, sizeof(risp_command_t));
 			ptr += sizeof(risp_command_t);
 			added += sizeof(risp_command_t);
@@ -423,8 +512,15 @@ risp_length_t risp_addbuf_str(void *buffer, risp_command_t command, risp_length_
 			assert(added == (sizeof(risp_command_t)+int_len+length));
 		}
 	}
+	else {
+		// a command of an invalid type must have been selected.  
+		assert(0);
+	}
+
+// 	log_data("BUFFER: ",  buffer, added);
 	
-	assert(added >= 0);
+	
+	assert(added > 0);
 	return(added);
 }
 
