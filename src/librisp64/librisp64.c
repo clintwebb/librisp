@@ -375,7 +375,7 @@ void network_int(unsigned char *buffer, risp_int_t value, short int_len)
 	}
 	
 	// now add the final byte
-	buffer[i] = (unsigned char) (value & 0xf);
+	buffer[i] = (unsigned char) (value & 0xff);
 	added++;
 	
 	assert(added == int_len);
@@ -394,11 +394,8 @@ risp_length_t risp_addbuf_noparam(void *buffer, risp_command_t command)
 	assert(buffer);
 	unsigned char *ptr = buffer;
 
-	unsigned char style = command >> (8+(8-5));
-
 	// first we need to make sure that this command really is an integer command, and not a string.
-	if ((style & 0xf) == 0) {
-
+	if ((command & 0x7800) != 0) {
 		network_int(ptr, command, sizeof(risp_command_t));
 		ptr += sizeof(risp_command_t);
 		added += sizeof(risp_command_t);
@@ -406,7 +403,8 @@ risp_length_t risp_addbuf_noparam(void *buffer, risp_command_t command)
 		assert(added == sizeof(risp_command_t));
 	}
 	else {
-		// a command of an invalid type must have been selected.  
+		// a command of an invalid type must have been selected.  Check your Command ID's.  
+		// Commands with no params should be in the range of 0x0000 to 0x07ff, and 0x8000 to 0x87ff.
 		assert(0);
 	}
 	
@@ -454,6 +452,7 @@ risp_length_t risp_addbuf_int(void *buffer, risp_command_t command, risp_int_t v
 	}
 	else {
 		// a command of an invalid type must have been selected.  
+		// integer commands must fall within the range of 0x0800 to 0x47ff.
 		assert(0);
 	}
 
@@ -513,7 +512,9 @@ risp_length_t risp_addbuf_str(void *buffer, risp_command_t command, risp_length_
 		}
 	}
 	else {
-		// a command of an invalid type must have been selected.  
+		// a command of an invalid type must have been selected.
+		// Check the command ID's used.
+		// string commands must fall within the range of 0x8800 to 0xffff.
 		assert(0);
 	}
 
