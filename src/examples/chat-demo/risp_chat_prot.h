@@ -15,7 +15,7 @@
 #define CMD_NOECHO             0x0004
 #define CMD_FOLLOW             0x0005
 #define CMD_NOFOLLOW           0x0006
-#define CMD_NOUPDATE          0x0007
+#define CMD_NOUPDATE           0x0007
 #define CMD_GET_LATEST_MDG_ID  0x0008
 
 // No Parameters  - 0x8000 to 0x87ff

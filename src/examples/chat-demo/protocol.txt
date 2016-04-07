@@ -22,7 +22,7 @@ PROTOCOL REQUIREMENTS
    9.  The client must send a HELLO command before any other command except NOP.
   10.  If any other command is received before a HELLO (besides NOP), then the connection will be closed.
   11.  The client implementation should also close the connection if it sends a HELLO, but doesn't get 
-       an answering HELLO within a reasonable time.
+       an answering HELLO_ACK within a reasonable time.
   12.  Client can send a NAME command to set the name for all proceeding messages that are sent.
 
 
@@ -52,7 +52,7 @@ PROTOCOL REQUIREMENTS
 
    1.  Clients by default are in NO_FOLLOW mode, where they do not automatically receive every new 
        message received.  
-   2.  Whenever a new message is posted, clients that are in NOFOLLOW mode (the default)will receive:
+   2.  Whenever a new message is posted, clients that are in NOFOLLOW mode (the default) will receive:
           - LATEST_MSG_ID command
    3   Whenever a new message is posted, clients that are in FOLLOW mode will receive:
           - MSG_ID command
@@ -60,11 +60,12 @@ PROTOCOL REQUIREMENTS
           - MESSAGE command
        Clients should make note of the MSG_ID command, and update its own internal tracking of the 
        latest message.
-   4.  The client can request a specific message, by sending a SEND_MSG command. 
-   5.  The client can specify to receive all messages since a specific ID by sending the SEND_SINCE 
+   4.  Whenever a new message is posted, clients that are in NOUPDATE mode, will receive nothing at all.
+   5.  The client can request a specific message, by sending a SEND_MSG command. 
+   6.  The client can specify to receive all messages since a specific ID by sending the SEND_SINCE 
        command.  The server will send all the messages since that particular ID.   In other words, 
        it is saying "the last message I got was XXXX, send every message since then".
-   6.  There is no restriction on the contents of the Name, other than it is 255 characters in 
+   7.  There is no restriction on the contents of the Name, other than it is 255 characters in 
        length or less.  It is up to the client to parse it to ensure it can print/handle the 
        contents of it.
 
@@ -72,7 +73,7 @@ PROTOCOL REQUIREMENTS
   DISCONNECTING
   -------------
    1.  Server will disconnect a client if it has received no activity in a certain time period 
-       (5 minutes).
+       (5 minutes).  ACTUALLY NOT IMPLEMENTED IN THIS EXAMPLE.
    2.  Client can close the connection.
    3.  Client can send a GOODBYE command which will cause the server to close the connection.
    4.  After sending the GOODBYE command, the client should not send any more data over the 
@@ -80,7 +81,7 @@ PROTOCOL REQUIREMENTS
 
 
 
-       
+
 ----------------------------------------------------------------------------------------------------
 COMMANDS
 ----------------------------------------------------------------------------------------------------
@@ -121,7 +122,7 @@ COMMANDS
     
         Puts the session in FOLLOW mode.  When new messages are received by the server, it will send 
         the entire message to this client session.  This allows a client to receive the messages in 
-        the most efficient manner.
+        the most efficient manner.  (DEFAULT)
     
     0x0006  NO_FOLLOW (Client to Server)
     

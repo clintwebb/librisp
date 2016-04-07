@@ -4,30 +4,40 @@
 //
 // Since this example is of a server, we are utilising libevent, and will run as a daemon or a 
 // standard process.  For use in docker containers, best practice is to not use daemon mode.
+
+/*
+    Copyright (C) 2016  Clinton Webb
+    
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Lesser Public License for more details.
+
+    You should have received a copy of the GNU Lesser Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
 //--------------------------------------------------------------------------------------------------
 
 
 // includes
-#include <assert.h>
-#include <errno.h>
-#include <event.h>
-#include <fcntl.h>
-// #include <netdb.h>
+#include <assert.h>			// assert
+#include <errno.h>			// errno
+#include <event.h>			// event, event_base
+#include <fcntl.h>			// fcntl
 #include <pwd.h>
 #include <signal.h>
-#include <stdio.h>
+#include <stdio.h>			// perror, printf
 #include <stdlib.h>
-#include <string.h>
+#include <string.h>			// strndup
 #include <sys/resource.h>
-// #include <sys/socket.h>
-// #include <sys/time.h>
-#include <sys/types.h>
-#include <unistd.h>
+#include <sys/socket.h>		// socket
+#include <sys/types.h>		// socket
+#include <unistd.h>			// fcntl, close
 
 // Include the risp library.
 #include <risp64.h>
 
-#include "daemon.h"
 #include "risp_chat_prot.h"
 
 
@@ -43,7 +53,8 @@
 
 #define INVALID_HANDLE -1
 
-#define OPTIMAL_MAX (100000)
+// if our buffer gets bigger than this, then we should attempt to shrink it.
+#define OPTIMAL_MAX (DEFAULT_CHUNKSIZE*64)
 
 
 #define PROTOCOL_VALIDATION "RISP Server"
@@ -72,6 +83,7 @@ typedef struct {
 
 typedef struct {
 	long long msgID;
+	char *name;
 	int length;
 	char *message;
 } message_t;
@@ -81,6 +93,7 @@ typedef struct {
 	message_t **messages;
 	int latest;
 } messages_t;
+
 
 
 // each connection needs to be tracked and maintained.
@@ -112,6 +125,8 @@ typedef struct {
 	} data;
 	
 	void *next, *prev;
+	
+	messages_t *messages;
 } session_t ;
 
 
@@ -124,7 +139,7 @@ typedef struct {
 	struct event      *event;				
 	bool               verbose;
 	risp_t            *risp;
-	messages_t        *messages;		// pointer to the messages object.
+	messages_t        *messages;
 } server_t;
 
 
@@ -240,20 +255,140 @@ void cmdNop(void *base)
 
 void session_close(session_t *session)
 {
-	assert(0);
+	assert(session);
+	
+	if (session->out.event) {
+		event_del(session->out.event);
+		session->out.event = NULL;
+	}
+	if (session->out.buffer) { 
+		free(session->out.buffer); 
+		session->out.buffer = NULL;
+	}
+	session->out.length = 0;
+	session->out.max = 0;
+
+	assert(session->in.event);
+	event_del(session->in.event);
+	session->in.event = NULL;
+	if (session->in.buffer) {
+		free(session->in.buffer);
+		session->in.buffer = NULL;
+	}
+	session->in.length = 0;
+	session->in.max = 0;
+	
+	
+	assert(session->handle >= 0);
+	close(session->handle);
+	session->handle = INVALID_HANDLE;
+	
+	session->ev_base = NULL;
+	session->risp = NULL;
+
+	// unless we are the first session, we will remove this session from the double-linked list.
+	// NOTE. The first session will be removed when a new socket connection is established, since the listener object has the head pointer.
+	if (session->prev) {
+		if (session->next) {
+			session_t *next = (session_t *) session->next;
+			next->prev = session->prev;
+		}
+		session_t *prev =  (session_t *) session->prev; 
+		prev->next = session->next;
+	}
 }
 
+
+// make sure that the buffer is large enough for the specified length.
+void maxbuf_out(session_t *session, risp_length_t length) 
+{
+	assert(session);
+	assert(length > 0);
+	
+	if (session->out.length + length > session->out.max) {
+		session->out.max += (length + 1024);
+		session->out.buffer = realloc(session->out.buffer, session->out.max);
+	}
+}
+
+
+void setWriteEvent(session_t *session) 
+{
+	assert(session);
+	assert(session->ev_base);
+	assert(session->out.event == NULL);
+	assert(session->handle >= 0);
+	assert(session->out.length > 0);
+	assert(session->out.buffer);
+	
+	// the event is a one-off event.  If the callback is unable to send all the data in the buffer, 
+	// it will add it back in to the queue again.
+	session->out.event = event_new(session->ev_base, session->handle, EV_WRITE, session_write_handler, (void *)session);
+	assert(session->out.event);
+	event_add(session->out.event, 0);
+}
 
 
 
 //--------------------------------------------------------------------------------------------------
 void send_HelloAck(session_t *session)
 {
-	// to avoid double handling of the buffer, we will simply increase the existing outbuffer if necessary, and add commands directly to it.
-	// 
+	assert(session);
+
+	assert((session->out.max == 0 && session->out.buffer == NULL) || (session->out.max > 0 && session->out.buffer));
 	
-	assert(0);
+	// make sure there is enough space in the buffer for this transaction.
+	maxbuf_out(session, risp_command_length(CMD_HELLO_ACK, 0));
+	assert(session->out.max > 0);
+	assert(session->out.length >= 0);
+	assert(session->out.buffer);
+
+	// add the command to the buffer.
+	risp_length_t len = risp_addbuf_noparam(session->out.buffer + session->out.length, CMD_HELLO_ACK);
+	assert(len > 0);
+	session->out.length += len;
+	assert(session->out.length > 0);
+	
+	// We have data in the out buffer, if there isn't already a write event set for it, we need to do that.
+	if (session->out.event == NULL) {
+		setWriteEvent(session);
+	}
+	assert(session->out.event);
 }
+
+
+// output data to the session.  The session has its own buffer, so we will be adding this new data 
+// to the outgoing buffer for the session and setting the WRITE event if it isn't already.
+void session_send(session_t *session, int length, unsigned char *data)
+{
+	assert(session);
+	assert(length > 0);
+	assert(data);
+	
+	// make sure the dev has not passed in the buffer for the session.
+	assert(data != session->out.buffer);
+	
+	// check if there is enough space to add data to the buffer.  If not, increase the buffer.
+	if (session->out.length + length > session->out.max) {
+		session->out.max = session->out.length + length;
+		session->out.buffer = realloc(session->out.buffer, session->out.max);
+		assert(session->out.buffer);
+	}
+	
+	// copy the contents to the buffer.
+	memcpy(session->out.buffer + session->out.length, data, length);
+	session->out.length += length;
+	assert(session->out.length > 0);
+	assert(session->out.length <= session->out.max);
+
+	// We have data in the out buffer, if there isn't already a write event set for it, we need to do that.
+	if (session->out.event == NULL) {
+		setWriteEvent(session);
+	}
+	assert(session->out.event);
+	
+}
+
 
 //--------------------------------------------------------------------------------------------------
 // This callback function is to be fired when the CMD_HELLO command is received.  
@@ -263,9 +398,10 @@ void cmdHello(void *base, risp_length_t length, risp_data_t *data)
 	// are using, so we need to make a cast-pointer for it.
  	session_t *session = (session_t *) base;
 	
-	// Always a good idea to put lots of asserts in your code.  It helps to 
-	// capture developer mistakes that would sometimes be difficult to catch at 
-	// a later date.
+	printf("Session[%d]: Received HELLO\n", session->handle);
+	
+	// Always a good idea to put lots of asserts in your code.  It helps to capture developer 
+	// mistakes that would sometimes be difficult to catch at a later date.
   	assert(session != NULL);
 	
 	// we've received a string as well, so we need to validate that as well.
@@ -278,6 +414,7 @@ void cmdHello(void *base, risp_length_t length, risp_data_t *data)
 	assert(session->data.authenticated == 0 || session->data.authenticated == 1);
 	if (session->data.authenticated == 1) {
 		// session has already been authenticated, and it is illegal to attempt to authenticate again.
+		printf("Session[%d] was already authenticated. Closing.\n", session->handle);
 		session_close(session);
 	}
 	else {
@@ -309,6 +446,8 @@ void cmdHello(void *base, risp_length_t length, risp_data_t *data)
 					// since this authentication should happen before any other data is given, we 
 					// should check that everything else is in a init state.
 					assert(session->data.name[0] == '\0');
+
+					printf("Session[%d] Established.\n", session->handle);
 					
 					// We reply with a HELLO_ACK
 					send_HelloAck(session);
@@ -367,6 +506,9 @@ static bool checkAuth(session_t *session)
 //--------------------------------------------------------------------------------------------------
 // This callback function is called when the CMD_GOODBYE command is received.  It will close the 
 // session.
+// NOTE: Since we are processing commands, and it is possible that more data processing is possible, 
+//       we cannot simply close teh connection and all the buffers, etc.  We should not change in 
+//       any way the buffer that is being processed.
 void cmdGoodbye(void *base) 
 {
 	session_t *session = (session_t *) base;
@@ -374,9 +516,8 @@ void cmdGoodbye(void *base)
 
 	printf("Received GOODBYE from [%d]\n", session->handle);
 	
-	session_close(session);
+	session->closing = 1;
 }
-
 
 
 //--------------------------------------------------------------------------------------------------
@@ -563,8 +704,42 @@ void cmdName(void *base, risp_length_t length, risp_data_t *data)
 		assert(length < 256);
 		memcpy(session->data.name, data, length);
 		session->data.name[length] = '\0';	// null-terminate it to make it easier to manipulate.
+		printf("Session[%d]: Setting Name to '%s'\n", session->handle, session->data.name);
 	}
 }
+
+long long message_new(messages_t *messages, const char *name, int msg_len, const char *message)
+{
+	long long msgID = 0;
+
+	assert(messages);
+	assert(name);
+	assert(msg_len > 0);
+	assert(message);
+
+	assert((messages->latest == 0 && messages->messages == NULL) || (messages->latest > 0 && messages->messages));
+	
+	msgID = messages->latest + 1;
+	assert(msgID > 0);
+	messages->messages = realloc(messages->messages, sizeof(message_t *) * msgID);
+	assert(messages->messages);
+
+	message_t *msg = malloc(sizeof(message_t));
+	msg->msgID = msgID;
+	msg->name = strdup(name);
+	msg->length = msg_len;
+	msg->message = malloc(msg_len+1);
+	memcpy(msg->message, message, msg_len);
+	msg->message[msg_len] = 0;		// null terminate it just in case it is a valid string, and makes it easier to output debug, etc.
+
+	messages->messages[messages->latest] = msg;
+	messages->latest ++;
+	assert(messages->latest == msgID);
+	
+	assert(msgID > 0);
+	return(msgID);
+}
+
 
 
 void cmdMessage(void *base, risp_length_t length, risp_data_t *data) 
@@ -581,11 +756,122 @@ void cmdMessage(void *base, risp_length_t length, risp_data_t *data)
 
 	if (checkAuth(session) == true) {
 
-		// need to relay the message to each client that is connected (other than this one, unless it has echo enabled).
-		assert(0);
+		/// need to relay the message to each client that is connected (other than this one, unless 
+		/// it has echo enabled).
+		
+		// the data is actually a string, so we can make a copy of it, making sure it is NULL terminated.  strndup will do that for us.
+		char *message = strndup((const char *) data, length);
+		assert(message);
+		
+		printf("Session[%d]: Received Message '%s'\n", session->handle, message); 
+
+		
+		// store the message in our messages store.
+		assert(session->messages);
+		long long msgID = message_new(session->messages, session->data.name, length, message);
+		assert(msgID > 0);
+		
+		// the clever thing about the response we are sending is that for those receiving only the 
+		// msgID, we can send only that part of the message.  This means we can pre-fill our 
+		// outgoing message, but only send the bit we need to for each session.
+		
+		
+		// Pre-filling the messages that will be sent.  If only one or two clients are 
+		// connected, then this will not save much, but if thousands of clients are connected, then 
+		// this will save a lot of work.   Being able to send the exact same response to many 
+		// clients as a result of an action is a valuable part of protocol design if you are able 
+		// to do it that way.  
+		// 
+		// To put this another way.
+		//   Response for sessions in NOFOLLOW mode.
+		//		CMD_MSG_ID(integer)
+		//
+		//   Response for sessions in FOLLOW mode.
+		//		CMD_MSG_ID(integer)
+		//		CMD_NAME(string)	- If name is supplied.
+		//		CMD_MESSAGE(string)
+
+		unsigned char *out_data = NULL;
+		int out_full_length = 0;
+		int out_id_length = 0;
+		
+		assert(length > 0);
+		out_data = malloc(1024+256+length);
+		assert(out_data);
+		assert(sizeof(out_data[0]) == 1);	// code assumes that pointer-arithmetic will be based on 1 byte.
+		out_full_length = risp_addbuf_int(out_data, CMD_MSG_ID, msgID);
+		out_id_length = out_full_length;	// make note of the length with just the ID in the buffer.
+		assert(out_id_length > 0);
+
+		// now add the rest of the message to our outbuffer for those .
+		if (session->data.name[0] != 0) {
+			out_full_length += risp_addbuf_str(out_data+out_full_length, CMD_NAME, strlen(session->data.name), session->data.name);
+		}
+		out_full_length += risp_addbuf_str(out_data+out_full_length, CMD_MESSAGE, length, data);
+
+		// the session has a pointer to the previous and next sessions in the list.  
+		session_t *relay = session->prev;
+		session_t *last = session;
+		
+		// first go through the prev list (from this session)
+		while (relay) {
+			// double check our double-linked-list is valid.
+			assert(relay->next == last);
+			if (relay->data.follow == true) { 
+				printf("Sending FULL message(%ld) to session[%d]. len=%d\n", msgID, relay->handle, out_full_length);
+				session_send(relay, out_full_length, out_data);
+			}
+			else if (relay->data.update == true) { 
+				printf("Sending ID message(%ld) to session[%d].\n", msgID, relay->handle);
+				session_send(relay, out_id_length, out_data); 
+			}
+			else {
+				printf("NOT Sending message(%ld) to session[%d].\n", msgID, relay->handle);
+			}
+			last = relay;
+			relay = relay->prev;
+		}
+		
+		// now go through the 'next' list (from this session.
+		last = session;
+		relay = session->next;
+		while (relay) {
+			// double check our double-linked-list is valid.
+			assert(relay->prev == last);
+			if (relay->data.follow == true) { 
+				printf("Sending FULL message(%ld) to session[%d]. len=%d\n", msgID, relay->handle, out_full_length);
+				session_send(relay, out_full_length, out_data); 
+			}
+			else if (relay->data.update == true) { 
+				printf("Sending ID message(%ld) to session[%d].\n", msgID, relay->handle);
+				session_send(relay, out_id_length, out_data);
+			}
+			else {
+				printf("NOT Sending message(%ld) to session[%d].\n", msgID, relay->handle);
+			}
+			last = relay;
+			relay = relay->next;
+		}
+		
+		// send the response for this particular session.
+		if (session->data.echo == true) {
+			if (session->data.follow == true) {
+				printf("Echoing message(%ld) to session[%d].\n", msgID, session->handle);
+				session_send(session, out_full_length, out_data);
+			}
+			else if (session->data.update == true) {
+				printf("Echoing new ID (%ld) to session[%d].\n", msgID, session->handle);
+				session_send(session, out_id_length, out_data);
+			}
+			else {
+				printf("NOT AA Echoing message(%ld) to session[%d].\n", msgID, session->handle);
+			}
+		}
+		else {
+			printf("NOT Echoing message(%ld) to session[%d].\n", msgID, session->handle);
+		}
 	}
 }
-
 
 
 void cmdIllegal(void *base)
@@ -605,7 +891,7 @@ void cmdIllegal(void *base)
 // allocate space off the heap for a new struct.  clear and initialise it with the new handle.
 session_t * session_new(void)
 {
-	session_t *session  = (session_t *) malloc(sizeof(session_t));
+	session_t *session  = (session_t *) calloc(1, sizeof(session_t));
 	assert(session);
 		
 	session->risp = NULL;
@@ -625,12 +911,14 @@ session_t * session_new(void)
 	session->handle = INVALID_HANDLE;
 	
 	session->data.name[0] = 0;
-	session->data.echo = 0;
-	session->data.follow = 0;
-	session->data.update = 0;
+	session->data.echo = false;
+	session->data.follow = true;
+	session->data.update = true;
 	session->data.authenticated = 0;
 	
 	session->closing = 0;
+	
+	session->messages = NULL;
 	
 	return(session);
 }
@@ -639,10 +927,8 @@ session_t * session_new(void)
 
 
 //--------------------------------------------------------------------------------------------------
-// this function is called when we have received a new socket.   We need to create a new session, 
-// and add it to our session list.  We need to pass to the session any pointers to other sub-systems 
-// that it will need to have, and then we insert the session into the 'session-circle' somewhere.  
-// Finally, we need to add the new session to the event base.
+// This function is called when we have received a data over a socket we have accepted a connection 
+// for.  We read the data from the socket and then process it.
 static void session_read_handler(int hid, short flags, void *data)
 {
 	assert(hid >= 0);
@@ -653,42 +939,47 @@ static void session_read_handler(int hid, short flags, void *data)
 	assert(session->handle == hid);
 	assert(session->ev_base != NULL);
 	
+	printf("Session[%d]: Session Handler Activated.\n", session->handle);
+	
 	if (flags & EV_TIMEOUT) {
-		// the socket has not received activity within the timeout period.  If we havent 
-		// authenticated by now, then we need to close the socket.  
-		assert(0);
-		session_close(session);
-		
+		// the socket has not received activity within the timeout period.
+		printf("Session[%d]: Soft timeout\n", session->handle);
+
 		// if the timeout occured, then the READ flag should not be set.
 		assert((flags & EV_READ) == 0);
+
+		// If we haven't authenticated by now, then we need to close the socket.  
+		if (session->data.authenticated == false) {
+			printf("Session[%d]: Authentication Timeout. Closing\n", session->handle);
+			session_close(session);
+		}
 	}
 	
 	
 	if (flags & EV_READ) {
 	
+		printf("Session[%d]: Receiving Data.\n", session->handle);
+		
 		unsigned int avail = session->in.max - session->in.length;
 		if (avail < DEFAULT_CHUNKSIZE) {
 			session->in.max += DEFAULT_CHUNKSIZE;
 			session->in.buffer = (unsigned char *) realloc(session->in.buffer, session->in.max);
 			avail = session->in.max - session->in.length;
+			printf("Session[%d]: Increased Buffer size.  len=%d, max=%d\n", session->handle, session->in.length, session->in.max);
 		}
- 		assert(avail >= DEFAULT_CHUNKSIZE);
-	
-		int res = read(hid, session->in.buffer + session->in.length, avail);
+
+		assert(session->in.buffer);
+		assert(session->in.length >= 0);
+		assert(avail >= DEFAULT_CHUNKSIZE);
+		ssize_t res = recv(session->handle, session->in.buffer + session->in.length, avail, O_NONBLOCK);
+		printf("Session[%d]: read result: %ld\n", session->handle, res);
 		if (res > 0) {
 			session->in.length += res;
 			assert(session->in.length <= session->in.max);
-
-			// if we pulled out the max we had avail in our buffer, that means we can pull out more at a time.
-			if (res == avail) {
-				session->in.max += DEFAULT_CHUNKSIZE;
-				session->in.buffer = (unsigned char *) realloc(session->in.buffer, session->in.max);
-			}
-
 		}
 		else if (res == 0) {
-			session_close(session);
 			printf("Session[%d] closed while reading.\n", hid);
+			session_close(session);
 		}
 		else {
 			assert(res == -1);
@@ -700,29 +991,35 @@ static void session_read_handler(int hid, short flags, void *data)
 		
 		if ((session->closing == 0) && (session->in.length > 0)) {
 			
+			printf("Session[%d]: Processing data received. len=%d\n", session->handle, session->in.length);
+			
 			assert(session->risp != NULL);
 			assert(session->in.length <= session->in.max);
 			assert(session->in.length > 0);
 			
-			res = risp_process(session->risp, session, session->in.length, session->in.buffer);
-			assert(res <= session->in.length);
-			assert(res >= 0);
-			if (res < session->in.length) {
-				// to ensure that we dont run out of memory, the partial system is not suitable when large volumes of data is being sent.
-				avail = session->in.length - res;
-				memmove(session->in.buffer, session->in.buffer + res, avail);
-				session->in.length -= res;
+			risp_length_t processed = risp_process(session->risp, session, session->in.length, session->in.buffer);
+			printf("Session[%d]: Processed %ld of %ld.\n", session->handle, (long) processed, (long) session->in.length);
+			assert(processed <= session->in.length);
+			assert(processed >= 0);
+			if (processed < session->in.length) {
+				// we didn't process all the data in the buffer.  This means we haven't received it 
+				// all yet.  Move the un-processed data to the start of the buffer, and wait for the 
+				// rest to arrive.
+				avail = session->in.length - processed;
+				memmove(session->in.buffer, session->in.buffer + processed, avail);
+				session->in.length -= processed;
+				assert(session->in.length > 0);
 			}
 			else {
 				session->in.length = 0;
 			}
 		}
-		else {
+
+		if (session->closing != 0) {
 			// need to close the connection now that all the output has been sent.
-			assert(0);
+			session_close(session);
 		}
 	}
-		
 	
 	// Once our 'partial' processing has passed a certain point, we want to clean up the memory that 
 	// we have allocated.  This is also to combat situations where people are sending a valid data 
@@ -731,7 +1028,6 @@ static void session_read_handler(int hid, short flags, void *data)
 	// memory used by the session.   This is intended to ensure that doesn't cause more serious 
 	// memory issues.
  	if (session->in.max > OPTIMAL_MAX) {
-		
 		if (session->in.length < session->in.max) {
 			session->in.buffer = (unsigned char *) realloc(session->in.buffer, session->in.length);
 			printf("shrunk inbuffer [len=%d, max=%d]\n", session->in.length, session->in.max);
@@ -741,19 +1037,6 @@ static void session_read_handler(int hid, short flags, void *data)
 }
 
 
-void setWriteEvent(session_t *session) 
-{
-	assert(session);
-	assert(session->ev_base);
-	assert(session->out.event == NULL);
-	assert(session->handle >= 0);
-	
-	// the event is a one-off event.  If the callback is unable to send all the data in the buffer, 
-	// it will add it back in to the queue again.
-	session->out.event = event_new(session->ev_base, session->handle, EV_WRITE, session_write_handler, (void *)session);
-	assert(session->out.event);
-	event_add(session->out.event, 0);
-}
 
 
 // this function is called when we have received a new socket.   We need to 
@@ -772,10 +1055,15 @@ static void session_write_handler(int hid, short flags, void *data)
 	assert(session->handle == hid);
 	assert(session->ev_base);
 	
+	// The WRITE event is not set for PERSIST so we can remove the event pointer once this handler 
+	// has fired.
+	assert(session->out.event);
+	session->out.event = NULL;
+	
 	// we've requested the event, so we should have data to process.
-	assert(session->out.buffer != NULL);
+	assert(session->out.buffer);
 	assert(session->out.length > 0);
-	assert(session->out.max > 0);
+	assert(session->out.max >= session->out.length);
 	assert(session->out.length <= session->out.max);
 	
 	int res = send(hid, session->out.buffer, session->out.length, 0);
@@ -806,7 +1094,8 @@ static void session_write_handler(int hid, short flags, void *data)
 	}
 	
 	// if we have not sent everything, then we dont need create a new event.
-	if (session->out.length == 0) {
+	if (session->out.length > 0) {
+		assert(session->out.event == NULL);
 		setWriteEvent(session);
 	}
 	
@@ -1031,11 +1320,6 @@ static void server_event_handler(int hid, short flags, void *data)
 	// These are cast as void pointers, so you need to be quite specific in your usage of them.
 	// We have a pointer to the head of the list in the server object.
 
-	// This session will end up at the top of the list, so it will have a NULL 'prev' pointer, and 
-	// the 'next' will point to what is currently the head.
-	session->prev = NULL;
-	session->next = server->sessions;
-
 	// if we already have a session at the head of the list, we need to make sure it points back to 
 	// this new one.
 	if (server->sessions) {
@@ -1044,12 +1328,22 @@ static void server_event_handler(int hid, short flags, void *data)
 		tmp->prev = session;
 	}
 	
+	// This session will end up at the top of the list, so it will have a NULL 'prev' pointer, and 
+	// the 'next' will point to what is currently the head.
+	session->prev = NULL;
+	session->next = server->sessions;
+	server->sessions = session;
+	
+	// the session needs a pointer to the messages object (interface).
+	assert(server->messages);
+	session->messages = server->messages;
 	
 	// setup the event handling...  Create the persistent event, and activate it.
 	// we set it with a ten-second timeou
 	assert(session->in.event == NULL);
 	assert(session->ev_base);
 	session->in.event = event_new(session->ev_base, session->handle, EV_TIMEOUT | EV_READ | EV_PERSIST, session_read_handler, (void *)session);
+	assert(session->in.event);
 	event_add(session->in.event, &auth_timeout);
 }
 
