@@ -241,7 +241,7 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, const vo
 	int cont = 1;
 	while(cont != 0 && left >= 2) {
 
-// 		log_data("IN: ", ptr, left);
+//  		log_data("IN: ", ptr, left);
 		
 		// Each command in the protocol is made up of two parts, the style bitmap, and the 
 		// command id.  Together they make up a command in the protocol, but since we will be 
@@ -253,21 +253,22 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, const vo
 		
 		ptr += 2;
 		
-// 		printf("RISP: Command received: 0x%llx\n", cmd);
+//  		printf("RISP: Command received: 0x%llx\n", cmd);
 		// get rid of the bits from style we dont want when checking it.  Note that the style bits 
 		// make up the first 5 bits.
 		unsigned char style = cmd >> 11;
 		
-// 		printf("RISP: Style: 0x%llx\n", style);
+//  		printf("RISP: Style: 0x%llx\n", style);
 
 		// get the length of the integer part of our command (if there is one), by simply stripping off the string-bit.
 		short int_len = style & 0xf;
-// 		printf("RISP: int_len=%d\n", int_len);
+//  		printf("RISP: int_len=%d\n", int_len);
 		assert(int_len < 16);
 		
 		if (int_len == 0) {
 			func_nul = risp->commands[cmd].callback;
 			if (func_nul) { (*func_nul)(base); }
+			assert(sizeof(risp_command_t) == 2);
 			left -= sizeof(risp_command_t);
 			// dont need to increase the ptr, because there was no parameters.
 		}
@@ -292,8 +293,9 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, const vo
 			// we have the first param.  Not sure yet if it is an integer parameter, or the length 
 			// of the string that will follow.  We will check the 'style' bitmap for that.
 			
-			if (style & 0x10 != 0x10) {
+			if ((style >> 4) == 0) {
 				// this command is NOT a string, so we have all that we need.
+// 				printf("RISP. command is INTEGER\n");
 				func_int = risp->commands[cmd].callback;
 				if (func_int) { (*func_int)(base, intvalue); }
 				left -= (sizeof(risp_command_t) + int_len);
@@ -301,6 +303,7 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, const vo
 			}
 			else {
 				// this command is a string, so we also need to get the rest of it.
+// 				printf("RISP. command is STRING\n");
 				
 				// first, we need to make sure we have enough data.
 				if (left < (sizeof(risp_command_t) + int_len + intvalue)) {
@@ -312,15 +315,19 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, const vo
 					if (func_str) (*func_str)(base, intvalue, ptr);
 					ptr += intvalue;
 					left -= (sizeof(risp_command_t) + int_len + intvalue);
+					assert(left >= 0);
 				}
 			}
 		}
 	}	
+
+	risp_length_t retval = len - left;
 	
-	assert((len - left) >= 0);	
+	assert(retval >= 0);	
+	assert(retval <= len);
 
 	// looks like we are returning the number of bytes processed, rather than the amount left in the buffer.
-	return(len - left);
+	return(retval);
 }
 
 
@@ -395,7 +402,7 @@ risp_length_t risp_addbuf_noparam(void *buffer, risp_command_t command)
 	unsigned char *ptr = buffer;
 
 	// first we need to make sure that this command really is an integer command, and not a string.
-	if ((command & 0x7800) != 0) {
+	if ((command & 0x7800) == 0) {
 		network_int(ptr, command, sizeof(risp_command_t));
 		ptr += sizeof(risp_command_t);
 		added += sizeof(risp_command_t);
