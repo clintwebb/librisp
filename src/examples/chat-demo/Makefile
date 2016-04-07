@@ -23,4 +23,5 @@ install: risp_chat_server risp_chat_stream
 clean:
 	@-rm risp_chat_server
 	@-rm risp_chat_stream
+	@-rm risp_chat_send
 
