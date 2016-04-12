@@ -23,7 +23,7 @@
 #include <signal.h>			// signal
 #include <stdio.h>			// printf, fprintf
 #include <stdlib.h>			// malloc, atoi, realloc
-#include <string.h>			// memcpy, strndup
+#include <string.h>			// memcpy
 #include <sys/types.h>		// recv, socket, connect, send
 #include <sys/socket.h>		// recv, inet_addr, socket, connect, send
 #include <unistd.h>			// fcntl, close, getopt
@@ -115,14 +115,11 @@ void cmdMessage(void *base, char *value, risp_length_t length)
 	// we either have data, or we dont.
 	assert((value && length > 0) || (value == NULL && length == 0));
 
-	// copy the data to a temporary buffer.  
-	// strndup will make a copy of the value and make sure it is NULL terminated.  The original 
-	// value is not guaranteed to be NULL terminated, and we should not be modifying the contents of 
-	// that pointer, as it may be pointing directly to the incoming buffer, and if we NULL terminate 
-	// the string directly, we might be overwriting a preceeding command.
-	
-	char *message = strndup(value, length);
+	// copy the data to a temporary buffer, and NULL terminate it so it is a string we can use.
+	char *message = malloc(length+1);
 	assert(message);
+	memcpy(message, value, length);
+	message[length] = 0;
 		
 	// Normally you would verify that the data is safe to print, but for this excersize, we are just 
 	// going to print it.
@@ -301,8 +298,8 @@ int main(int argc, char **argv)
 		
 		// to simplify this process, we will join all the commands together.  We will not wait for responses.
 
-		risp_length_t len = 0;	// this var will have the length of each addition to the buffer.
-		risp_length_t buflen = 0;
+		int len = 0;	// this var will have the length of each addition to the buffer.
+		int buflen = 0;
 		assert(message);
 		int bufmax = 1024 + strlen(message);
 		if (name) { bufmax += strlen(name); }

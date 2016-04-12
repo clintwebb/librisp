@@ -85,6 +85,7 @@ void cmdLatestMsgID(void *base, risp_int_t value)
 	assert(value > 0);
 	assert(value >= data->latest_msg_id);
 	data->latest_msg_id = value;
+	
 // 	printf("CMD_LATEST_MSG_ID: %d\n", value);	
 }
 
@@ -151,6 +152,9 @@ void cmdMessage(void *base, risp_length_t length, char *value)
 // or the buffers are free.   In non-blocking mode, if the function cant perform the operation, it 
 // will return immediatly with an error code that indicates such.  This allows us to attempt a 
 // receive on the socket, but continue and do other things if there is no data ready.
+// 
+// NOTE: We are not using this function in this application, but providing it here in the example, 
+//       because it is something you likely will need to use in your own similar applications.
 void sock_nonblock(int handle)
 {
 	assert(handle > 0);
@@ -191,7 +195,7 @@ int sock_connect(char *host, int port)
     else {
 		// If that didn't work, try to resolve host name by DNS.
 		struct hostent *hp = gethostbyname(host);
-		if(hp) {
+		if (hp) {
 			memcpy( &(sin.sin_addr.s_addr), &(hp->h_addr[0]), hp->h_length);
 			resolved ++;
 		}
@@ -211,13 +215,15 @@ int sock_connect(char *host, int port)
 			}
 		}
 	}
+	else {
+		assert(handle < 0);
+	}
 
 	return(handle);
 }
 
 
-// send over the socket.  Whether we are in blocking mode or not, we will continue sending until all 
-// the data is sent.  
+// send over the socket.  Return 0 if socket is still connected, -1 if the socket has closed.
 int sock_send(int sock, char *data, int len)
 {
 	assert(sock >= 0);
@@ -231,12 +237,12 @@ int sock_send(int sock, char *data, int len)
 	
 		// TODO: Should check for blocking mode, as it may have been set.
 		// we are in blocking mode, so if we received a 0 or less, then the socket is closed.
-		if (result <= 0) {
+		if (result == 0) {
 			close(sock);
 			sending = 0;
 			return(-1);
 		}
-		else {
+		else if (result > 0) {
 			// increase our counter of how much has been sent.  If we have sent everything, then we 
 			// will break out of the loop.
 			sending -= result;
@@ -305,7 +311,7 @@ int sendGoodbye(int handle)
 	// as it is big enough.
 	char buffer[1024];
 	
-	risp_length_t len = risp_addbuf_noparam(buffer, CMD_HELLO);
+	risp_length_t len = risp_addbuf_noparam(buffer, CMD_GOODBYE);
 	assert(len > 0);
 	
 	// now that the we have the RISP stream created for the command, we need to send it.
@@ -339,6 +345,7 @@ int main(int argc, char **argv)
 	data.latest_msg_id = 0;
 	data.name = NULL;
 
+	// get the command line options.
 	int c;
 	while ((c = getopt(argc, argv, "p:s:")) != -1) {
 		switch (c) {
@@ -350,21 +357,24 @@ int main(int argc, char **argv)
 				srv = strdup(optarg);
 				assert(srv != NULL);
 				break;				
+			case 'h':
+				printf("usage:\n\nrisp_chat_stream [-s server] [-p port] [-h]\n");
+				exit(1);
+				break;
 			default:
 				fprintf(stderr, "Illegal argument \"%c\"\n", c);
 				return 1;
 		}
 	}
 
-	// set the signal trap.
+	// set the signal trap, so we can break out of the loop when user presses Ctrl-C.
 	signal(SIGINT, sig_handler);
 	
-
 	// get an initialised risp structure.
 	risp_t *risp = risp_init(NULL);
 	assert(risp);
 
-	// add the callback routines.
+	// add the callback routines for the commands we are going to receive.
 	risp_add_command(risp, CMD_NOP,              &cmdNop);
 	risp_add_command(risp, CMD_HELLO_ACK,        &cmdHelloAck);
 	risp_add_command(risp, CMD_MSG_ID,           &cmdMsgID);
@@ -375,7 +385,8 @@ int main(int argc, char **argv)
 	risp_add_invalid(risp, &cmdInvalid);
 
 	
-	// connect to the remote socket, and set it to non-blocking.
+	// connect to the remote socket. We will leave it in blocking mode.  When we do the recv, we 
+	// will specify that the recv operation is non-blocking.
 	assert(srv && port > 0);
 	int handle = sock_connect(srv, port);
 	if (handle <= 0) {
@@ -383,7 +394,9 @@ int main(int argc, char **argv)
 	}
 	else {
 		
-		// now that we are connected, first we need to send the HELLO command.
+		// now that we are connected, first we need to send the HELLO and FOLLOW commands.  
+		// These commands could have been lumped together in a single send, but for the purpose of 
+		// demonstrating RISP, this code does each operationg specifically.
 		if (sendHello(handle) != 0) {
 			// couldn't send the command, close the handle, and exit.
 			close(handle);
@@ -401,8 +414,14 @@ int main(int argc, char **argv)
 		int max = 0;
 		char *buffer = NULL;
 		int used = 0;
+		int goodbye_sent = 0;	// if we have sent a GOODBYE, we dont want to 
 		
-		while (_sigtrap < 2 && handle >= 0) {
+		// we will loop until the socket is closed.  If the user presses Ctrl-C, we will send a 
+		// GOODBYE command to the server, which will then close the socket.  If the user presses 
+		// Ctrl-C more than once, we will not wait for the server, and will close the socket 
+		// directly.  Every time the user presses Ctrl-C, it should break out of the sleep, so it 
+		// should respond pretty quickly.
+		while (handle >= 0) {
 		
 // 			printf(".");
 			
@@ -424,24 +443,8 @@ int main(int argc, char **argv)
 				if (errno == EWOULDBLOCK || errno == EAGAIN) {
 					// there was no data to read from the socket.
 					// we will now sleep for 1 second.  If the user pressed Ctrl-C, then the sleep 
-					// function will exit immediately.
-					if (sleep(2) > 0) {
-						if (_sigtrap == 1) {
-							// Exited early because a signal arrived.
-							printf("Closing...\n");
-							
-							// TODO: shouldn't just close the socket.  Should instead send GOODBYE command and wait for socket to close.
-							if (sendGoodbye(handle) != 0) {
-								close(handle);
-								handle = -1;
-							}
-						}
-						else {
-							assert(_sigtrap == 2);
-							close(handle);
-							handle = -1;
-						}
-					}
+					// function will exit immediately. Only do the sleep if Ctrl-C hasn't been hit.
+					if (_sigtrap == 0) { sleep(1); }
 				}
 			}
 			else if (result == 0) {
@@ -474,13 +477,25 @@ int main(int argc, char **argv)
 				
 				assert(used >= 0 && used < max);
 			}
-		}
-		
-		// we are exiting now.
-		
-		// close the socket.
-		if (handle >= 0) {
-			close(handle);
+			
+			
+			if (handle >= 0) {
+				if (_sigtrap == 1 && goodbye_sent == 0) {
+					printf("Closing...\n");
+					
+					// TODO: shouldn't just close the socket.  Should instead send GOODBYE command and wait for socket to close.
+					if (sendGoodbye(handle) != 0) {
+						close(handle);
+						handle = -1;
+					}
+					
+					goodbye_sent ++;
+				}
+				else if (_sigtrap > 1) {
+					close(handle);
+					handle = -1;
+				}
+			}
 		}
 	}
 

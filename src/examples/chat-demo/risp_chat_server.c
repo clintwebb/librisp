@@ -29,7 +29,7 @@
 #include <signal.h>
 #include <stdio.h>			// perror, printf
 #include <stdlib.h>
-#include <string.h>			// strndup
+#include <string.h>			// memmove
 #include <sys/resource.h>
 #include <sys/socket.h>		// socket
 #include <sys/types.h>		// socket
@@ -108,9 +108,9 @@ typedef struct {
 		unsigned int max;
 		struct event *event;
 	} in, out;
-	
-	risp_t *risp;
 
+	risp_t *risp;
+	
 	// used to indicate that the session is closing even though there is an outgoing buffer that is 
 	// being sent.  When the buffer is emptied, then the connection should then be closed.
 	int closing;
@@ -257,6 +257,9 @@ void session_close(session_t *session)
 {
 	assert(session);
 	
+	assert(session->handle >= 0);
+	printf("Closing session[%d].\n", session->handle);
+	
 	if (session->out.event) {
 		event_del(session->out.event);
 		session->out.event = NULL;
@@ -277,7 +280,6 @@ void session_close(session_t *session)
 	}
 	session->in.length = 0;
 	session->in.max = 0;
-	
 	
 	assert(session->handle >= 0);
 	close(session->handle);
@@ -364,6 +366,8 @@ void session_send(session_t *session, int length, unsigned char *data)
 	assert(session);
 	assert(length > 0);
 	assert(data);
+	
+	assert(session->handle >= 0);
 	
 	// make sure the dev has not passed in the buffer for the session.
 	assert(data != session->out.buffer);
@@ -741,6 +745,22 @@ long long message_new(messages_t *messages, const char *name, int msg_len, const
 }
 
 
+char * message_get_msg(messages_t *messages, long long msgID) 
+{
+	assert(messages);
+	assert(msgID > 0);
+	
+	assert(msgID <= messages->latest);
+	
+	assert(messages->messages);
+	message_t *msg = messages->messages[msgID - 1];
+	assert(msg);
+	assert(msg->msgID == msgID);
+	assert(msg->message);
+	
+	return(msg->message);	
+}
+
 
 void cmdMessage(void *base, risp_length_t length, risp_data_t *data) 
 {
@@ -759,17 +779,16 @@ void cmdMessage(void *base, risp_length_t length, risp_data_t *data)
 		/// need to relay the message to each client that is connected (other than this one, unless 
 		/// it has echo enabled).
 		
-		// the data is actually a string, so we can make a copy of it, making sure it is NULL terminated.  strndup will do that for us.
-		char *message = strndup((const char *) data, length);
-		assert(message);
+		// store the message in our messages store.
+		assert(session->messages);
+		long long msgID = message_new(session->messages, session->data.name, length, (char *) data);
+		assert(msgID > 0);
+
+		// when we added the message to the messages array, it copied the message and ensured it was null termined, so we can now get a pointer to it.
+		const char *message = message_get_msg(session->messages, msgID);
 		
 		printf("Session[%d]: Received Message '%s'\n", session->handle, message); 
 
-		
-		// store the message in our messages store.
-		assert(session->messages);
-		long long msgID = message_new(session->messages, session->data.name, length, message);
-		assert(msgID > 0);
 		
 		// the clever thing about the response we are sending is that for those receiving only the 
 		// msgID, we can send only that part of the message.  This means we can pre-fill our 
@@ -817,16 +836,18 @@ void cmdMessage(void *base, risp_length_t length, risp_data_t *data)
 		while (relay) {
 			// double check our double-linked-list is valid.
 			assert(relay->next == last);
-			if (relay->data.follow == true) { 
-				printf("Sending FULL message(%ld) to session[%d]. len=%d\n", msgID, relay->handle, out_full_length);
-				session_send(relay, out_full_length, out_data);
-			}
-			else if (relay->data.update == true) { 
-				printf("Sending ID message(%ld) to session[%d].\n", msgID, relay->handle);
-				session_send(relay, out_id_length, out_data); 
-			}
-			else {
-				printf("NOT Sending message(%ld) to session[%d].\n", msgID, relay->handle);
+			if (relay->handle >= 0) {
+				if (relay->data.follow == true) { 
+					printf("Sending FULL message(%lld) to session[%d]. len=%d\n", msgID, relay->handle, out_full_length);
+					session_send(relay, out_full_length, out_data);
+				}
+				else if (relay->data.update == true) { 
+					printf("Sending ID message(%lld) to session[%d].\n", msgID, relay->handle);
+					session_send(relay, out_id_length, out_data); 
+				}
+				else {
+					printf("NOT Sending message(%lld) to session[%d].\n", msgID, relay->handle);
+				}
 			}
 			last = relay;
 			relay = relay->prev;
@@ -838,16 +859,18 @@ void cmdMessage(void *base, risp_length_t length, risp_data_t *data)
 		while (relay) {
 			// double check our double-linked-list is valid.
 			assert(relay->prev == last);
-			if (relay->data.follow == true) { 
-				printf("Sending FULL message(%ld) to session[%d]. len=%d\n", msgID, relay->handle, out_full_length);
-				session_send(relay, out_full_length, out_data); 
-			}
-			else if (relay->data.update == true) { 
-				printf("Sending ID message(%ld) to session[%d].\n", msgID, relay->handle);
-				session_send(relay, out_id_length, out_data);
-			}
-			else {
-				printf("NOT Sending message(%ld) to session[%d].\n", msgID, relay->handle);
+			if (relay->handle >= 0) {
+				if (relay->data.follow == true) { 
+					printf("Sending FULL message(%lld) to session[%d]. len=%d\n", msgID, relay->handle, out_full_length);
+					session_send(relay, out_full_length, out_data); 
+				}
+				else if (relay->data.update == true) { 
+					printf("Sending ID message(%lld) to session[%d].\n", msgID, relay->handle);
+					session_send(relay, out_id_length, out_data);
+				}
+				else {
+					printf("NOT Sending message(%lld) to session[%d].\n", msgID, relay->handle);
+				}
 			}
 			last = relay;
 			relay = relay->next;
@@ -856,19 +879,19 @@ void cmdMessage(void *base, risp_length_t length, risp_data_t *data)
 		// send the response for this particular session.
 		if (session->data.echo == true) {
 			if (session->data.follow == true) {
-				printf("Echoing message(%ld) to session[%d].\n", msgID, session->handle);
+				printf("Echoing message(%lld) to session[%d].\n", msgID, session->handle);
 				session_send(session, out_full_length, out_data);
 			}
 			else if (session->data.update == true) {
-				printf("Echoing new ID (%ld) to session[%d].\n", msgID, session->handle);
+				printf("Echoing new ID (%lld) to session[%d].\n", msgID, session->handle);
 				session_send(session, out_id_length, out_data);
 			}
 			else {
-				printf("NOT AA Echoing message(%ld) to session[%d].\n", msgID, session->handle);
+				printf("NOT AA Echoing message(%lld) to session[%d].\n", msgID, session->handle);
 			}
 		}
 		else {
-			printf("NOT Echoing message(%ld) to session[%d].\n", msgID, session->handle);
+			printf("NOT Echoing message(%lld) to session[%d].\n", msgID, session->handle);
 		}
 	}
 }
@@ -1258,19 +1281,48 @@ server_t *server_new(int port, char *address)
 }
 
 
-//----------------------------------------------------------------------------------------------------------------------------------------
-// this function is called when we have received a new socket.   We need to create a new session, and add it to our session list.  We need 
-// to pass to the session any pointers to other sub-systems that it will need to have, and then we insert the session into the 
-// 'session-circle' somewhere.  Finally, we need to add the new session socket to the event base so we can know when data is received..
+
+
+
+// The server object has a pointer to a double-linked list of sessions.  The linked-list is cleaned 
+// up as connections are dropped.  But it cannot clean up the first one.  So this function will 
+// clean up the first connection in the list if it can.
+static void server_cleanup_sessions(server_t *server)
+{
+	assert(server);
+	
+	if (server->sessions) {
+		
+		session_t *session = server->sessions;
+		
+		if (session->handle < 0) {
+			server->sessions = session->next;
+			if (server->sessions) {
+				server->sessions->prev = NULL;
+			}
+			session_close(session);
+		}
+	}
+}
+
+
+
+
+//--------------------------------------------------------------------------------------------------
+// this function is called when we have received a new socket.   We need to create a new session, 
+// and add it to our session list.  We need to pass to the session any pointers to other sub-systems 
+// that it will need to have, and then we insert the session into the 'session-circle' somewhere.  
+// Finally, we need to add the new session socket to the event base so we can know when data is 
+// received..
 static void server_event_handler(int hid, short flags, void *data)
 {
-	
 	assert(hid >= 0);
 	assert(data != NULL);
 	
 	server_t *server = (server_t *) data;
 	assert(server->handle == hid);
 
+	// accept incoming socket connection.
 	struct sockaddr_storage addr;
 	socklen_t addrlen = sizeof(addr);
 	int sfd = accept(hid, (struct sockaddr *)&addr, &addrlen);
@@ -1337,6 +1389,11 @@ static void server_event_handler(int hid, short flags, void *data)
 	// the session needs a pointer to the messages object (interface).
 	assert(server->messages);
 	session->messages = server->messages;
+
+	// since the server object owns the linked-list of sessions, we need to clean it up 
+	// periodically.  We could either set a Timer event, or we can just do it each time a new 
+	// connection comes in.
+	server_cleanup_sessions(server);
 	
 	// setup the event handling...  Create the persistent event, and activate it.
 	// we set it with a ten-second timeou
@@ -1529,7 +1586,8 @@ int main(int argc, char **argv)
 	server->messages = messages_new();
 	assert(server->messages);
 	
-	// add the server to the event base
+	// add the server to the event base.  It is already listening on the socket, this will generate 
+	// an event when a new connection is established.
 	assert(main_event_base != NULL);
 	server_add_eventbase(server, main_event_base);
 
