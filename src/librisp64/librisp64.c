@@ -205,7 +205,7 @@ static void log_data(char *tag, unsigned char *data, int length)
 		}
 
 		assert(i == start);
-		printf("%s\n", buffer);
+		fprintf(stderr, "%s\n", buffer);
 	}
 }
 
@@ -217,6 +217,12 @@ static void log_data(char *tag, unsigned char *data, int length)
 // do with it.
 risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, const void *data)
 {
+	risp_length_t processed = 0;
+	
+	static itcount = 0;	// iteration counter for the debug output.
+	itcount ++;
+// 	fprintf(stderr, "RISP Process: itcount:%d, len=%d\n", itcount, len);
+	
 	// risp_int_t should be 64-bit long.
 	assert(sizeof(risp_int_t) == 8);
 	
@@ -241,6 +247,8 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, const vo
 	int cont = 1;
 	while(cont != 0 && left >= 2) {
 
+		assert(len == (left + processed));
+		
 //  		log_data("IN: ", ptr, left);
 		
 		// Each command in the protocol is made up of two parts, the style bitmap, and the 
@@ -253,23 +261,28 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, const vo
 		
 		ptr += 2;
 		
-//  		printf("RISP: Command received: 0x%llx\n", cmd);
+//  		fprintf(stderr, "RISP: Command received: 0x%llx\n", cmd);
+		
 		// get rid of the bits from style we dont want when checking it.  Note that the style bits 
 		// make up the first 5 bits.
 		unsigned char style = cmd >> 11;
 		
-//  		printf("RISP: Style: 0x%llx\n", style);
+//  		fprintf(stderr, "RISP: Style: 0x%llx\n", style);
 
 		// get the length of the integer part of our command (if there is one), by simply stripping off the string-bit.
 		short int_len = style & 0xf;
-//  		printf("RISP: int_len=%d\n", int_len);
+//  		fprintf(stderr, "RISP: int_len=%d\n", int_len);
 		assert(int_len < 16);
+		assert(int_len <= 8);	// we cannot handle any integer value greater than 64-bit.
 		
 		if (int_len == 0) {
 			func_nul = risp->commands[cmd].callback;
 			if (func_nul) { (*func_nul)(base); }
 			assert(sizeof(risp_command_t) == 2);
-			left -= sizeof(risp_command_t);
+			risp_length_t completed = sizeof(risp_command_t);
+// 			fprintf(stderr, "Completed: %d\n", completed);
+			left -= completed;
+			processed += completed;
 			// dont need to increase the ptr, because there was no parameters.
 		}
 		else if (left >= (sizeof(risp_command_t) + int_len)) {
@@ -295,15 +308,18 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, const vo
 			
 			if ((style >> 4) == 0) {
 				// this command is NOT a string, so we have all that we need.
-// 				printf("RISP. command is INTEGER\n");
+				fprintf(stderr, "RISP. command is INTEGER(len:%d)\n", int_len);
 				func_int = risp->commands[cmd].callback;
 				if (func_int) { (*func_int)(base, intvalue); }
-				left -= (sizeof(risp_command_t) + int_len);
+				risp_length_t completed = (sizeof(risp_command_t) + int_len);
+// 				fprintf(stderr, "Completed: %d\n", completed);
+				left -= completed;
+				processed += completed;
 				// dont need to increase the ptr, because that was done when we were reading in the integer.
 			}
 			else {
 				// this command is a string, so we also need to get the rest of it.
-// 				printf("RISP. command is STRING\n");
+// 				fprintf(stderr, "RISP. command is STRING(len:%d)\n", int_len);
 				
 				// first, we need to make sure we have enough data.
 				if (left < (sizeof(risp_command_t) + int_len + intvalue)) {
@@ -314,20 +330,23 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, const vo
 					func_str = risp->commands[cmd].callback;
 					if (func_str) (*func_str)(base, intvalue, ptr);
 					ptr += intvalue;
-					left -= (sizeof(risp_command_t) + int_len + intvalue);
+					risp_length_t completed = (sizeof(risp_command_t) + int_len + intvalue);
+// 					fprintf(stderr, "Completed: %d\n", completed);
+					left -= completed;
+					processed += completed;
 					assert(left >= 0);
 				}
 			}
 		}
 	}	
 
-	risp_length_t retval = len - left;
+	assert(processed + left == len);
 	
-	assert(retval >= 0);	
-	assert(retval <= len);
+	assert(processed >= 0);	
+	assert(processed <= len);
 
 	// looks like we are returning the number of bytes processed, rather than the amount left in the buffer.
-	return(retval);
+	return(processed);
 }
 
 

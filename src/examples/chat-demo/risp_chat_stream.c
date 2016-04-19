@@ -71,6 +71,10 @@ void cmdMsgID(void *base, risp_int_t value)
 	
 	assert(value > 0);
 	data->msg_id = value;
+
+	if (value > data->latest_msg_id) {
+		data->latest_msg_id = value;
+	}
 	
 // 	printf("CMD_MSG_ID: %d\n", value);	
 }
@@ -139,7 +143,7 @@ void cmdMessage(void *base, risp_length_t length, char *value)
 	// Normally you would verify that the data is safe to print, but for this excersize, we are just 
 	// going to print it.
 	char *name = data->name ? data->name : "Anonymous";
-	printf("%s:\n%s\n\n", name, message);
+// 	printf("%s: %s\n", name, message);
 
 }
 
@@ -465,12 +469,25 @@ int main(int argc, char **argv)
 				assert(processed <= used);
 				
 				if (processed < used) { 
-					// we have possibly 
+					// Our commands have probably been fragmented.
+					
+					printf("Fragmented commands: processed=%d, used=%d, max=%d\n", processed, used, max);
+					fflush(stdout);
+					
 					if (processed > 0) {
-						// we need to remove from the buffer the data that we have processed.  This is a simple approach, but not hte most efficient.
-						memmove(buffer, buffer+processed, used - processed);
-						used -= processed; 
+						// we need to remove from the buffer the data that we have processed.  
+						// This is a simple approach, but not the most efficient.
+						assert(sizeof(*buffer) == 1);
+						char *ptr = buffer+processed;
+						size_t length = used-processed;
+						
+						printf("Moving data.  length=%d\n", length);
+						
+						memmove(buffer, ptr, length);
+						used -= processed;
 						assert(used > 0);
+						
+						printf("After move. used=%d, max=%d\n", used, max);
 					}
 				} 
 				else { used = 0; }

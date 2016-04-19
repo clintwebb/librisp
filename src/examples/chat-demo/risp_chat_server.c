@@ -96,8 +96,11 @@ typedef struct {
 
 
 
-// each connection needs to be tracked and maintained.
-typedef struct {
+// each connection needs to be tracked and maintained.  We give this structure a typedef of 
+// session_t and also a struct label of __session_t.  The reason for this is that inside the 
+// structure we include 'next' and 'prev' pointers that point to other objects of the same 
+// structure.
+typedef struct __session_t {
 	int handle;
 	bool verbose;
 	struct event_base *ev_base;
@@ -124,7 +127,7 @@ typedef struct {
 		bool update;
 	} data;
 	
-	void *next, *prev;
+	struct __session_t *next, *prev;
 	
 	messages_t *messages;
 } session_t ;
@@ -369,7 +372,8 @@ void session_send(session_t *session, int length, unsigned char *data)
 	
 	assert(session->handle >= 0);
 	
-	// make sure the dev has not passed in the buffer for the session.
+	// make sure the dev has not passed in the buffer for the session.   
+	// This function ADDS to the session buffer.
 	assert(data != session->out.buffer);
 	
 	// check if there is enough space to add data to the buffer.  If not, increase the buffer.
@@ -390,7 +394,6 @@ void session_send(session_t *session, int length, unsigned char *data)
 		setWriteEvent(session);
 	}
 	assert(session->out.event);
-	
 }
 
 
@@ -436,7 +439,7 @@ void cmdHello(void *base, risp_length_t length, risp_data_t *data)
 			else {
 				// the string lengths are the same.  Thats good, makes comparison easy.
 				if (strncmp(PROTOCOL_VALIDATION, (char *) data, valid_len) != 0) {
-					// strings dont match.   Closing teh session.
+					// strings dont match.   Closing the session.
 					session_close(session);
 				}
 				else {
@@ -478,6 +481,7 @@ static bool checkAuth(session_t *session)
 	// capture developer mistakes that would sometimes be difficult to catch at 
 	// a later date.
   	assert(session);
+	assert(session->handle >= 0);
 	
 	// Check if the session is already authenticated
 	assert(session->data.authenticated == true || session->data.authenticated == false);
@@ -642,6 +646,7 @@ void cmdGetLatestMsgID(void *base, risp_int_t value)
 	printf("Received CMD_GET_LATEST_MSG_ID(%ld) from [%d]\n", value, session->handle);
 	
 	if (checkAuth(session) == true) {
+		// this code is not currently completed.
 		assert(0);
 	}
 }
@@ -658,6 +663,7 @@ void cmdSendMsg(void *base, risp_int_t value)
 	printf("Received CMD_SEND_MSG(%ld) from [%d]\n", value, session->handle);
 	
 	if (checkAuth(session) == true) {
+		// this code is not currently completed.
 		assert(0);
 	}
 }
@@ -674,6 +680,7 @@ void cmdSendSince(void *base, risp_int_t value)
 	printf("Received CMD_SEND_SINCE(%ld) from [%d]\n", value, session->handle);
 	
 	if (checkAuth(session) == true) {
+		// this code is not currently completed.
 		assert(0);
 	}
 }
@@ -789,11 +796,9 @@ void cmdMessage(void *base, risp_length_t length, risp_data_t *data)
 		
 		printf("Session[%d]: Received Message '%s'\n", session->handle, message); 
 
-		
 		// the clever thing about the response we are sending is that for those receiving only the 
 		// msgID, we can send only that part of the message.  This means we can pre-fill our 
 		// outgoing message, but only send the bit we need to for each session.
-		
 		
 		// Pre-filling the messages that will be sent.  If only one or two clients are 
 		// connected, then this will not save much, but if thousands of clients are connected, then 
@@ -822,7 +827,7 @@ void cmdMessage(void *base, risp_length_t length, risp_data_t *data)
 		out_id_length = out_full_length;	// make note of the length with just the ID in the buffer.
 		assert(out_id_length > 0);
 
-		// now add the rest of the message to our outbuffer for those .
+		// now add the rest of the message to our outbuffer.
 		if (session->data.name[0] != 0) {
 			out_full_length += risp_addbuf_str(out_data+out_full_length, CMD_NAME, strlen(session->data.name), session->data.name);
 		}
@@ -887,7 +892,7 @@ void cmdMessage(void *base, risp_length_t length, risp_data_t *data)
 				session_send(session, out_id_length, out_data);
 			}
 			else {
-				printf("NOT AA Echoing message(%lld) to session[%d].\n", msgID, session->handle);
+				printf("NOT Echoing message(%lld) to session[%d].\n", msgID, session->handle);
 			}
 		}
 		else {
@@ -1098,6 +1103,7 @@ static void session_write_handler(int hid, short flags, void *data)
 			session->out.length = 0;
 		}
 		else {
+			printf("** Incomplete write.  out.length=%d, res=%d\n", session->out.length, res);
 			// we only sent some of it.
 			memmove(session->out.buffer, session->out.buffer + res, session->out.length - res);
 			session->out.length -= res;
