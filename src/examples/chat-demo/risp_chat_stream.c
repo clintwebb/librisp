@@ -35,6 +35,10 @@
 #include "risp_chat_prot.h"
 
 
+
+#define CHUNK_SIZE 4096
+// #define CHUNK_SIZE 8
+
 // this variable is used to indicate that the user wants this application to exit.  They have 
 // pressed Ctrl-C, and we need to drop the connection and exit.
 static int _sigtrap = 0;
@@ -143,7 +147,7 @@ void cmdMessage(void *base, risp_length_t length, char *value)
 	// Normally you would verify that the data is safe to print, but for this excersize, we are just 
 	// going to print it.
 	char *name = data->name ? data->name : "Anonymous";
-// 	printf("%s: %s\n", name, message);
+	printf("%s: %s\n", name, message);
 
 }
 
@@ -431,16 +435,21 @@ int main(int argc, char **argv)
 			
 			assert(used <= max);
 			
-			if (max-used < 4096) { 
-				max += 4096;
+			if (max-used < CHUNK_SIZE) { 
+				max += CHUNK_SIZE;
 				buffer = realloc(buffer, max);
+				assert(buffer);
+				fprintf(stderr, "Increased Max Buffer to %d\n", max);
 			}
 			
 			// check for data on the socket.  We will do the receive in non-blocking mode, so if 
 			// there is no data, it will return immediately. If we received no data, we will wait for 
 			// 1 second before trying again.  If we have waited for 5 seconds, then we need to 
 			// send a NOP to keep the connection alive.
-			int result = recv(handle, buffer+used, max-used, MSG_DONTWAIT);
+			char *ptr = buffer + used;
+			int avail = max - used;
+			fprintf(stderr, "About to recv.  avail=%d\n", avail);
+			int result = recv(handle, ptr, avail, MSG_DONTWAIT);
 // 			printf("Recv: result=%d, used=%d, max=%d\n", result, used, max);
 			if (result < 0) {
 				assert(result == -1);
@@ -450,6 +459,9 @@ int main(int argc, char **argv)
 					// function will exit immediately. Only do the sleep if Ctrl-C hasn't been hit.
 					if (_sigtrap == 0) { sleep(1); }
 				}
+				else {
+					fprintf(stderr, "Unexpected result received from socket. errno=%d '%s'\n", errno, strerror(errno));
+				}
 			}
 			else if (result == 0) {
 				// socket has closed.
@@ -458,20 +470,22 @@ int main(int argc, char **argv)
 			}
 			else {
 				assert(result > 0);
-				
+				assert(result <= avail);
 				assert(used >= 0);
 				used += result;
+				assert(used <= max);
 				
 				// if we have some data received, then we need to process it.
+				fprintf(stderr, "Processing: %d\n", used);
 				risp_length_t processed = risp_process(risp, &data, used, buffer);
-// 				printf("Processed: %ld\n", processed);
+ 				fprintf(stderr, "Processed: %ld\n", processed);
 				assert(processed >= 0);
 				assert(processed <= used);
 				
 				if (processed < used) { 
 					// Our commands have probably been fragmented.
 					
-					printf("Fragmented commands: processed=%d, used=%d, max=%d\n", processed, used, max);
+					fprintf(stderr, "Fragmented commands: processed=%ld, used=%d, max=%d\n", processed, used, max);
 					fflush(stdout);
 					
 					if (processed > 0) {
@@ -480,19 +494,22 @@ int main(int argc, char **argv)
 						assert(sizeof(*buffer) == 1);
 						char *ptr = buffer+processed;
 						size_t length = used-processed;
+						assert((processed + length) == used);
 						
-						printf("Moving data.  length=%d\n", length);
+						fprintf(stderr, "Moving data.  length=%ld\n", length);
 						
 						memmove(buffer, ptr, length);
+						
 						used -= processed;
 						assert(used > 0);
+						assert(used < max);
 						
-						printf("After move. used=%d, max=%d\n", used, max);
+						fprintf(stderr, "After move. used=%d, max=%d\n", used, max);
 					}
 				} 
 				else { used = 0; }
 				
-				assert(used >= 0 && used < max);
+				assert(used >= 0 && used <= max);
 			}
 			
 			
