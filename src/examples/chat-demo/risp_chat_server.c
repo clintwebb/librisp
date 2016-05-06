@@ -488,6 +488,7 @@ static bool checkAuth(session_t *session)
 	if (session->data.authenticated == false) {
 		// session has not been authenticated, and it is illegal to attempt to operations without 
 		// authenticating first..
+		fprintf(stderr, "Closing connection.  Not Authenticated.\n");
 		session_close(session);
 		assert(ok == false);
 	}
@@ -522,7 +523,7 @@ void cmdGoodbye(void *base)
 	session_t *session = (session_t *) base;
 	assert(session);
 
-	printf("Received GOODBYE from [%d]\n", session->handle);
+	printf("Session [%d]: Received GOODBYE\n", session->handle);
 	
 	session->closing = 1;
 }
@@ -539,7 +540,7 @@ void cmdEcho(void *base)
 	session_t *session = (session_t *) base;
 	assert(session);
 
-	printf("Received ECHO from [%d]\n", session->handle);
+	printf("Session [%d]: Received ECHO\n", session->handle);
 
 	if (checkAuth(session) == true) {
 		// session is not closing.
@@ -560,7 +561,7 @@ void cmdNoEcho(void *base)
  	session_t *session = (session_t *) base;
 	assert(session);
 	
-	printf("Received NO_ECHO from [%d]\n", session->handle);
+	printf("Session [%d]: Received NO_ECHO\n", session->handle);
 	
 	if (checkAuth(session) == true) {
 		// remove the echo flag.
@@ -580,7 +581,7 @@ void cmdFollow(void *base)
  	session_t *session = (session_t *) base;
 	assert(session);
 		
-	printf("Received FOLLOW from [%d]\n", session->handle);
+	printf("Session [%d]: Received FOLLOW\n", session->handle);
 	
 	if (checkAuth(session) == true) {
 		// set the 'follow'  flags.
@@ -602,7 +603,7 @@ void cmdNoFollow(void *base)
 	session_t *session = (session_t *) base;
 	assert(session);
 	
-	printf("Received NO_FOLLOW from [%d]\n", session->handle);
+	printf("Session [%d]: Received NO_FOLLOW\n", session->handle);
 	
 	if (checkAuth(session) == true) {
 		// remove the follow flag.
@@ -622,7 +623,7 @@ void cmdNoUpdate(void *base)
 	session_t *session = (session_t *) base;
 	assert(session);
 	
-	printf("Received NO_UPDATE from [%d]\n", session->handle);
+	printf("Session [%d]: Received NO_UPDATE\n", session->handle);
 	
 	if (checkAuth(session) == true) {
 		// remove the update flag.
@@ -636,19 +637,63 @@ void cmdNoUpdate(void *base)
 
 
 // client is asking to know the latest msg ID that is available.
-void cmdGetLatestMsgID(void *base, risp_int_t value)
+void cmdGetLatestMsgID(void *base)
 {
 	// The base pointer that is passed thru the library doesnt know about the session structure we 
 	// are using, so we need to make a cast-pointer for it.
 	session_t *session = (session_t *) base;
 	assert(session);
 	
-	printf("Received CMD_GET_LATEST_MSG_ID(%ld) from [%d]\n", value, session->handle);
+	printf("Session [%d]: Received CMD_GET_LATEST_MSG_ID\n", session->handle);
 	
 	if (checkAuth(session) == true) {
 		// this code is not currently completed.
-		assert(0);
+		assert(session->messages);
+		assert(session->messages->latest >= 0);
+		
+		unsigned char out_data[2048];
+		int out_length = risp_addbuf_int(out_data, CMD_LATEST_MSG_ID, session->messages->latest);
+		assert(out_length > 0);
+
+		printf("Session[%d]: Sending Latest Message ID: %lld\n", session->handle, (long long) session->messages->latest);
+		session_send(session, out_length, out_data);
 	}
+}
+
+
+// Return the message associated with a message ID.
+char * message_get_msg(messages_t *messages, long long msgID) 
+{
+	assert(messages);
+	assert(msgID > 0);
+	
+	assert(msgID <= messages->latest);
+	
+	assert(messages->messages);
+	message_t *msg = messages->messages[msgID - 1];
+	assert(msg);
+	assert(msg->msgID == msgID);
+	assert(msg->message);
+	
+	return(msg->message);	
+}
+
+
+// Return the name associated with a message ID.
+char * message_get_name(messages_t *messages, long long msgID) 
+{
+	assert(messages);
+	assert(msgID > 0);
+	
+	assert(msgID <= messages->latest);
+	
+	assert(messages->messages);
+	message_t *msg = messages->messages[msgID - 1];
+	assert(msg);
+	assert(msg->msgID == msgID);
+	assert(msg->message);
+	
+	return(msg->name);	
 }
 
 
@@ -660,11 +705,42 @@ void cmdSendMsg(void *base, risp_int_t value)
 	session_t *session = (session_t *) base;
 	assert(session);
 	
-	printf("Received CMD_SEND_MSG(%ld) from [%d]\n", value, session->handle);
+	assert(sizeof(value) >= sizeof(long long));
+	printf("Session [%d]: Received CMD_SEND_MSG(%ld)\n", session->handle, value);
 	
 	if (checkAuth(session) == true) {
 		// this code is not currently completed.
-		assert(0);
+		assert(session->messages);
+		
+		
+		// when we added the message to the messages array, it copied the message and ensured it w
+		// as null termined, so we can now get a pointer to it.
+		char *message = message_get_msg(session->messages, value);
+		if (message) {
+			char *name = message_get_name(session->messages, value);
+			
+			//   Response:
+			//		CMD_MSG_ID(integer)
+			//		CMD_NAME(string)	- If name is supplied.
+			//		CMD_MESSAGE(string)
+
+		
+			int out_length_full = 0;
+			unsigned char *out_data_full = malloc(1024+256+strlen(message));
+			assert(out_data_full);
+			out_length_full = risp_addbuf_int(out_data_full, CMD_MSG_ID, value);
+			assert(out_length_full > 0);
+
+			// code assumes that pointer-arithmetic will be based on 1 byte.
+			assert(sizeof(out_data_full[0]) == 1);
+
+			// now add the rest of the message to our full outbuffer (only include Name if there is one).
+			out_length_full += risp_addbuf_str(out_data_full+out_length_full, CMD_NAME, strlen(name), name);
+			out_length_full += risp_addbuf_str(out_data_full+out_length_full, CMD_MESSAGE, strlen(message), message);
+			
+			printf("Session[%d]: By request, Sending message(%lld). len=%d\n", session->handle, (long long) value, out_length_full);
+			session_send(session, out_length_full, out_data_full);
+		}
 	}
 }
 
@@ -677,7 +753,7 @@ void cmdSendSince(void *base, risp_int_t value)
 	session_t *session = (session_t *) base;
 	assert(session);
 	
-	printf("Received CMD_SEND_SINCE(%ld) from [%d]\n", value, session->handle);
+	printf("Session[%d]: Received CMD_SEND_SINCE(%ld)\n", session->handle, value);
 	
 	if (checkAuth(session) == true) {
 		// this code is not currently completed.
@@ -708,7 +784,7 @@ void cmdName(void *base, risp_length_t length, risp_data_t *data)
  	session_t *session = (session_t *) base;
   	assert(session);
 	
-	printf("Received NAME from [%d]\n", session->handle);
+	printf("Session[%d] Received NAME\n", session->handle);
 	
 	if (checkAuth(session) == true) {
 		// copy the string that was provides from the stream (which is guaranteed to be complete)
@@ -752,21 +828,6 @@ long long message_new(messages_t *messages, const char *name, int msg_len, const
 }
 
 
-char * message_get_msg(messages_t *messages, long long msgID) 
-{
-	assert(messages);
-	assert(msgID > 0);
-	
-	assert(msgID <= messages->latest);
-	
-	assert(messages->messages);
-	message_t *msg = messages->messages[msgID - 1];
-	assert(msg);
-	assert(msg->msgID == msgID);
-	assert(msg->message);
-	
-	return(msg->message);	
-}
 
 
 void cmdMessage(void *base, risp_length_t length, risp_data_t *data) 
@@ -791,15 +852,13 @@ void cmdMessage(void *base, risp_length_t length, risp_data_t *data)
 		long long msgID = message_new(session->messages, session->data.name, length, (char *) data);
 		assert(msgID > 0);
 
-		// when we added the message to the messages array, it copied the message and ensured it was null termined, so we can now get a pointer to it.
-		const char *message = message_get_msg(session->messages, msgID);
+		// when we added the message to the messages array, it copied the message and ensured it w
+		// as null termined, so we can now get a pointer to it.
+		char *message = message_get_msg(session->messages, msgID);
+		char *name = message_get_name(session->messages, msgID);
 		
 		printf("Session[%d]: Received Message '%s'\n", session->handle, message); 
 
-		// the clever thing about the response we are sending is that for those receiving only the 
-		// msgID, we can send only that part of the message.  This means we can pre-fill our 
-		// outgoing message, but only send the bit we need to for each session.
-		
 		// Pre-filling the messages that will be sent.  If only one or two clients are 
 		// connected, then this will not save much, but if thousands of clients are connected, then 
 		// this will save a lot of work.   Being able to send the exact same response to many 
@@ -808,30 +867,34 @@ void cmdMessage(void *base, risp_length_t length, risp_data_t *data)
 		// 
 		// To put this another way.
 		//   Response for sessions in NOFOLLOW mode.
-		//		CMD_MSG_ID(integer)
+		//		CMD_LATEST_MSG_ID(integer)
 		//
 		//   Response for sessions in FOLLOW mode.
 		//		CMD_MSG_ID(integer)
 		//		CMD_NAME(string)	- If name is supplied.
 		//		CMD_MESSAGE(string)
 
-		unsigned char *out_data = NULL;
-		int out_full_length = 0;
-		int out_id_length = 0;
-		
-		assert(length > 0);
-		out_data = malloc(1024+256+length);
-		assert(out_data);
-		assert(sizeof(out_data[0]) == 1);	// code assumes that pointer-arithmetic will be based on 1 byte.
-		out_full_length = risp_addbuf_int(out_data, CMD_MSG_ID, msgID);
-		out_id_length = out_full_length;	// make note of the length with just the ID in the buffer.
-		assert(out_id_length > 0);
 
-		// now add the rest of the message to our outbuffer.
-		if (session->data.name[0] != 0) {
-			out_full_length += risp_addbuf_str(out_data+out_full_length, CMD_NAME, strlen(session->data.name), session->data.name);
-		}
-		out_full_length += risp_addbuf_str(out_data+out_full_length, CMD_MESSAGE, length, data);
+		int out_length_id = 0;
+		unsigned char *out_data_id = malloc(1024+256);
+		assert(out_data_id);
+		out_length_id   = risp_addbuf_int(out_data_id, CMD_LATEST_MSG_ID, msgID); 
+		assert(out_length_id > 0);
+
+		assert(length > 0);
+		
+		int out_length_full = 0;
+		unsigned char *out_data_full = malloc(1024+256+length);
+		assert(out_data_full);
+		out_length_full = risp_addbuf_int(out_data_full, CMD_MSG_ID, msgID);
+		assert(out_length_full > 0);
+
+		// code assumes that pointer-arithmetic will be based on 1 byte.
+		assert(sizeof(out_data_full[0]) == 1);
+
+		// now add the rest of the message to our full outbuffer (only include Name if there is one).
+		out_length_full += risp_addbuf_str(out_data_full+out_length_full, CMD_NAME, strlen(name), name);
+		out_length_full += risp_addbuf_str(out_data_full+out_length_full, CMD_MESSAGE, length, data);
 
 		// the session has a pointer to the previous and next sessions in the list.  
 		session_t *relay = session->prev;
@@ -843,12 +906,12 @@ void cmdMessage(void *base, risp_length_t length, risp_data_t *data)
 			assert(relay->next == last);
 			if (relay->handle >= 0) {
 				if (relay->data.follow == true) { 
-					printf("Sending FULL message(%lld) to session[%d]. len=%d\n", msgID, relay->handle, out_full_length);
-					session_send(relay, out_full_length, out_data);
+					printf("Sending FULL message(%lld) to session[%d]. len=%d\n", msgID, relay->handle, out_length_full);
+					session_send(relay, out_length_full, out_data_full);
 				}
 				else if (relay->data.update == true) { 
 					printf("Sending ID message(%lld) to session[%d].\n", msgID, relay->handle);
-					session_send(relay, out_id_length, out_data); 
+					session_send(relay, out_length_id, out_data_id); 
 				}
 				else {
 					printf("NOT Sending message(%lld) to session[%d].\n", msgID, relay->handle);
@@ -866,12 +929,12 @@ void cmdMessage(void *base, risp_length_t length, risp_data_t *data)
 			assert(relay->prev == last);
 			if (relay->handle >= 0) {
 				if (relay->data.follow == true) { 
-					printf("Sending FULL message(%lld) to session[%d]. len=%d\n", msgID, relay->handle, out_full_length);
-					session_send(relay, out_full_length, out_data); 
+					printf("Sending FULL message(%lld) to session[%d]. len=%d\n", msgID, relay->handle, out_length_full);
+					session_send(relay, out_length_full, out_data_full); 
 				}
 				else if (relay->data.update == true) { 
 					printf("Sending ID message(%lld) to session[%d].\n", msgID, relay->handle);
-					session_send(relay, out_id_length, out_data);
+					session_send(relay, out_length_id, out_data_id);
 				}
 				else {
 					printf("NOT Sending message(%lld) to session[%d].\n", msgID, relay->handle);
@@ -885,11 +948,11 @@ void cmdMessage(void *base, risp_length_t length, risp_data_t *data)
 		if (session->data.echo == true) {
 			if (session->data.follow == true) {
 				printf("Echoing message(%lld) to session[%d].\n", msgID, session->handle);
-				session_send(session, out_full_length, out_data);
+				session_send(session, out_length_full, out_data_full);
 			}
 			else if (session->data.update == true) {
 				printf("Echoing new ID (%lld) to session[%d].\n", msgID, session->handle);
-				session_send(session, out_id_length, out_data);
+				session_send(session, out_length_id, out_data_id);
 			}
 			else {
 				printf("NOT Echoing message(%lld) to session[%d].\n", msgID, session->handle);
@@ -898,6 +961,15 @@ void cmdMessage(void *base, risp_length_t length, risp_data_t *data)
 		else {
 			printf("NOT Echoing message(%lld) to session[%d].\n", msgID, session->handle);
 		}
+		
+		// we have finished sending the responses, we can free the out messages now.
+		assert(out_data_full);
+		free(out_data_full);
+		out_data_full = NULL;
+		
+		assert(out_data_id);
+		free(out_data_id);
+		out_data_id = NULL;
 	}
 }
 
