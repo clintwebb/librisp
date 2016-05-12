@@ -7,7 +7,6 @@ RUN ln -s /usr/lib/librisp64.so /usr/lib/librisp64.so.2
 COPY risp_chat_server /usr/bin/
 
 ENTRYPOINT ["/usr/bin/risp_chat_server"]
-#ENTRYPOINT ["/bin/bash"]
 EXPOSE 13555
 
 

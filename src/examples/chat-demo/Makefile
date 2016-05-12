@@ -29,6 +29,7 @@ risp_chat_send: risp_chat_send.c risp_chat_prot.h
 docker-build: docker/librisp64.so.1.0.0 risp_chat_server
 	cp risp_chat_server docker/
 	sudo docker build -t $(DOCKER_REPO)/risp_chat_server:$(DOCKER_VERSION) docker
+	sudo docker tag $(DOCKER_REPO)/risp_chat_server:$(DOCKER_VERSION) $(DOCKER_REPO)/risp_chat_server:latest
 
 
 install: risp_chat_server risp_chat_stream risp_chat_stream2
