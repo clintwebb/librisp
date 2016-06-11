@@ -252,7 +252,7 @@ risp_length_t risp_process(risp_t *risp, void *base, risp_length_t len, const vo
 
 		assert(len == (left + processed));
 // 		fprintf(stderr, "Buffer Length: %ld\n", left);
- 		log_data("IN: ", (unsigned char*) ptr, left);
+// 		log_data("IN: ", (unsigned char*) ptr, left);
 		
 		// Each command in the protocol is made up of two parts, the style bitmap, and the 
 		// command id.  Together they make up a command in the protocol, but since we will be 
