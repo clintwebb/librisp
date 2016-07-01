@@ -9,4 +9,8 @@ src/examples/struct_client
 src/examples/struct_server
 src/rfx/rfxd
 src/librisp64/librisp64-*.tar.gz
-
+src/examples/chat-demo/docker/risp_chat_server
+src/examples/chat-demo/risp_chat_send
+src/examples/chat-demo/risp_chat_server
+src/examples/chat-demo/risp_chat_stream
+src/examples/chat-demo/risp_chat_stream2
