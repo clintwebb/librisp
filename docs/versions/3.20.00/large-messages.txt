@@ -1,0 +1,18 @@
+The existing library handles messages of all sizes exactly the same, by reading all the data into memory, and then process it.  The 
+problem with that is that many implementations of software using the risp library may have very limited memory.
+
+In that case, large messages need to be handled very carefully.   
+
+To account for this, we can instead have the data stored to a temporary file.  This makes it complicated, because then how do we 
+process the file?  It makes little sence to bother putting the data in a file, if we then need to load the entire file into memory.  
+Some systems might be able to assume that if you allocate more memory than you have, you could rely on SWAP to move things out to disk, 
+but that might not work very well in some systems.  Indeed some systems will not have swap space at all.
+
+When Initialising the Risp interface, will provide different callbacks for large messages.  These callbacks will be given a file handle 
+instead of a block of memory, and then it can process it however it likes.
+
+We will also need to be able to process a RISP stream from a file handle as well, because very likely the large amount of data could 
+very well be wrapping more RISP commands.
+
+
+
