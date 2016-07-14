@@ -69,34 +69,27 @@ typedef int_least64_t risp_length_t;
 typedef int_least64_t risp_int_t;
 typedef unsigned char risp_data_t;	// will be used as a pointer.
 
-typedef struct {
-	void *callback;
-} risp_handler_t;
 
+typedef void * RISP_PTR;
 
-typedef struct {
-	risp_handler_t commands[RISP_MAX_USER_CMD+1];
-	void * invalid_callback;
-	char created_internally;
-} risp_t;
 
 
 ///////////////////////////////////////////
 // declare the public functions.
 
 // init and shutdown.
-risp_t *risp_init(risp_t *risp);
-risp_t *risp_shutdown(risp_t *risp);
+RISP_PTR risp_init(RISP_PTR risp);
+RISP_PTR risp_shutdown(RISP_PTR risp);
 
 // Setup a callback function to be called when an unexpected command is received.
-void risp_add_invalid(risp_t *risp, void *callback);
+void risp_add_invalid(RISP_PTR risp, void *callback);
 
 // setup of callback commands
-void risp_add_command(risp_t *risp, risp_command_t command, void *callback);
+void risp_add_command(RISP_PTR risp, risp_command_t command, void *callback);
 
 // providing data that needs to be processed and sent to the callback commands.  
 // Will return the number of bytes that were processed.
-risp_length_t risp_process(risp_t *risp, void *base, risp_length_t length, const void *data);
+risp_length_t risp_process(RISP_PTR risp, void *base, risp_length_t length, const void *data);
 
 
 // The buffer functions will assist with adding a command to a buffer that is provided. 
