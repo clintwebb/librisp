@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <ctype.h>
 
 
 #include <stdio.h>
@@ -43,7 +44,6 @@ typedef struct {
 	long long verifier;
 	risp_handler_t commands[RISP_MAX_USER_CMD+1];
 	void * invalid_callback;
-	char created_internally;
 } risp_t;
 
 
@@ -59,9 +59,8 @@ typedef struct {
 
 //--------------------------------------------------------------------------------------------------
 // Initialise everything we need to initialise.   This will return a pointer to a risp_t structure 
-// that has been allocated and initialised.  If the parameter is NULL, it will allocate space.  If a 
-// pointer param is provided, it will initialize that space instead.
-RISP_PTR risp_init(RISP_PTR risp)
+// that has been allocated and initialised.  
+RISP_PTR risp_init(void)
 {
 	risp_t *r;
 
@@ -76,16 +75,8 @@ RISP_PTR risp_init(RISP_PTR risp)
 	assert(RISP_MAX_USER_CMD <= (256*256));
 
 	// allocate memory for the main struct.
-	if (risp == NULL) {
-		r = (risp_t *) malloc(sizeof(risp_t));
-		r->created_internally = 1;
-		r->verifier = RISP_STRUCT_VERIFIER;
-	}
-	else {
-		r = (risp_t *) risp;
-		assert(r->verifier == RISP_STRUCT_VERIFIER);
-		r->created_internally = 0;
-	}
+	r = (risp_t *) malloc(sizeof(risp_t));
+	r->verifier = RISP_STRUCT_VERIFIER;
 
 
 	if (r->verifier != RISP_STRUCT_VERIFIER) {
@@ -117,38 +108,26 @@ RISP_PTR risp_init(RISP_PTR risp)
 
 //--------------------------------------------------------------------------------------------------
 // Clean up the structure that were created by the library.  
-RISP_PTR risp_shutdown(RISP_PTR r)
+void risp_shutdown(RISP_PTR r)
 {
-	int i;
-
 	// if a NULL was passed in, then the developer has probably made a mistake.
 	assert(r != NULL);
-	if (r == NULL) {
-		return(NULL);
-	}
+	if (r != NULL) {
+		risp_t *risp = (risp_t *) r;
 
-	risp_t *risp = (risp_t *) r;
-
-	// The object referenced by the 
-	assert(risp->verifier == RISP_STRUCT_VERIFIER);
-	if (risp->verifier != RISP_STRUCT_VERIFIER) {
-		return(NULL);
-	}
-	
-	
-	for (i=0; i<RISP_MAX_USER_CMD; i++) {
-		risp->commands[i].callback = NULL;
-	}
-	
-	assert(risp->created_internally == 1 | risp->created_internally == 0);
-	if (risp->created_internally == 0) {
-		// risp structure was not created internally, caller must take care of it.
-		return(risp);
-	}
-	else {
+		// The object referenced by the 
+		assert(risp->verifier == RISP_STRUCT_VERIFIER);
+		if (risp->verifier != RISP_STRUCT_VERIFIER) {
+			return;
+		}
+		
+		int i;
+		for (i=0; i<RISP_MAX_USER_CMD; i++) {
+			risp->commands[i].callback = NULL;
+		}
+		
 		// we allocated the space, so we need to free it.
 		free(risp);	risp = NULL;
-		return(NULL);
 	}
 }
 
@@ -276,7 +255,7 @@ risp_length_t risp_process(RISP_PTR r, void *base, risp_length_t len, const void
 	risp_length_t processed = 0;
 	
 #ifndef NDEBUG
-	static itcount = 0;	// iteration counter for the debug output.
+	static int itcount = 0;	// iteration counter for the debug output.
 	itcount ++;
 // 	fprintf(stderr, "RISP Process: itcount:%d, len=%ld\n", itcount, len);
 #endif
