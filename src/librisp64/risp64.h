@@ -78,8 +78,8 @@ typedef void * RISP_PTR;
 // declare the public functions.
 
 // init and shutdown.
-RISP_PTR risp_init(RISP_PTR risp);
-RISP_PTR risp_shutdown(RISP_PTR risp);
+RISP_PTR risp_init(void);
+void risp_shutdown(RISP_PTR risp);
 
 // Setup a callback function to be called when an unexpected command is received.
 void risp_add_invalid(RISP_PTR risp, void *callback);
