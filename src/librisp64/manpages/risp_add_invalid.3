@@ -1,0 +1,30 @@
+.\" man page for librisp64
+.\" Contact webb.clint@gmail.com to correct errors or omissions. 
+.TH risp_add_invalid 3 "18 July 2016" "3.20.00" "Add a handler for responding to unsupported commands"
+.SH NAME
+risp_add_invalid \- Add a handler for responding to unsupported commands.
+.SH SYNOPSIS
+.B #include <risp64.h>
+.sp
+.B void risp_add_invalid(RISP_PTR risp, void *callback);
+.sp
+compile with the 
+.B -lrisp64
+option
+
+.SH DESCRIPTION
+.B risp_add_invalid() 
+will set a callback handler that will be called if a command is received that does not have a callback 
+listed.  This is to assist with handling issues where unexpected commands are received.  Normally 
+they should be ignored, but might want to log it or suggest and update, etc.
+.sp
+Passing in a NULL callback essentially disables it.
+.SH SEE ALSO
+.BR risp_init (3),
+.BR risp_add_command (3)
+.SH AUTHOR
+.nf
+Clint Webb (webb.clint@gmail.com)
+.br
+http://risp.rhokz.com/
+.fi

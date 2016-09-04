@@ -25,6 +25,9 @@ SONAME=$(MAINFILE).$(SOVER)
 LIBDIR=$(DESTDIR)/usr/lib
 INCDIR=$(DESTDIR)/usr/include
 
+
+MANPATH=/usr/local/man
+
 all: $(WORKDIR)/$(LIBFILE)
 package: $(WORKDIR)/$(LIBNAME)-$(LIBVER).tar.gz
 docker-build: docker_build
@@ -87,11 +90,21 @@ install: $(WORKDIR)/$(LIBFILE)
 
 	
 
-install_dev: $(INCFILE)
+install_dev: $(INCFILE) man-pages
 	cp $(INCFILE) $(INCDIR)/
 
+	
+man-pages: manpages/librisp64.3 manpages/risp_addbuf.3 manpages/risp_addbuf_noparam.3 manpages/risp_add_command.3 manpages/risp_init.3 manpages/risp_shutdown.3 manpages/risp.3 manpages/risp_addbuf_int.3 manpages/risp_addbuf_str.3 manpages/risp_add_invalid.3 manpages/risp_process.3
+	@mkdir tmp.install
+	@cp manpages/* tmp.install/
+	@gzip tmp.install/*.3
+	cp tmp.install/*.3.gz $(MANPATH)/man3/
+	@rm tmp.install/*
+	@rmdir tmp.install      
+	@echo "Man-pages Install complete."
 
-uninstall: 
+
+uninstall:
 	@-test -e $(LIBDIR)/$(LIBFILE) && rm $(LIBDIR)/$(LIBFILE)
 	@-test -e $(LIBDIR)/$(MAINFILE) && rm $(LIBDIR)/$(MAINFILE)
 
