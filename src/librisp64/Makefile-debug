@@ -40,6 +40,7 @@ $(WORKDIR)/$(LIBNAME).o: $(SRCFILE) $(INCFILE)
 	@echo "Making: $@"
 	@-[ -d $(WORKDIR) ] || mkdir $(WORKDIR)
 	gcc -c -fPIC $(SRCFILE) -o $@ $(ARGS)
+	@ls -al $(WORKDIR)
 
 $(WORKDIR)/$(LIBNAME).a: $(WORKDIR)/$(LIBNAME).o
 	@echo "Making: $@"
@@ -48,11 +49,13 @@ $(WORKDIR)/$(LIBNAME).a: $(WORKDIR)/$(LIBNAME).o
 	@rm $@
 	ar -r $@
 	ar -r $@ $^
+	@ls -al $(WORKDIR)
 
 $(WORKDIR)/$(LIBFILE): $(WORKDIR)/$(LIBNAME).o
 	@echo "Making: $@"
 	@-[ -d $(WORKDIR) ] || mkdir $(WORKDIR)
 	gcc -shared -Wl,-soname,$(SONAME) -o $@ $^
+	@ls -al $(WORKDIR)
 
 
 $(WORKDIR)/$(LIBNAME)-src-$(LIBVER).tar.gz: $(SRCFILE) $(INCFILE) Makefile
@@ -60,12 +63,14 @@ $(WORKDIR)/$(LIBNAME)-src-$(LIBVER).tar.gz: $(SRCFILE) $(INCFILE) Makefile
 	@-[ ! -d $(WORKDIR) ] && mkdir $(WORKDIR)
 	@-[ -e $@ ] && rm $@
 	tar zcf $@ $^
+	@ls -al $(WORKDIR)
 
 $(WORKDIR)/$(LIBNAME)-$(LIBVER).tar.gz: $(WORKDIR)/$(LIBFILE) $(INCFILE) $(LIBNAME).o
 	@echo "Making: $@"
 	@-[ ! -d $(WORKDIR) ] && mkdir $(WORKDIR)
 	@-[ -e $@ ] && rm $@
 	tar zcf $@ $^
+	@ls -al $(WORKDIR)
 
 
 docker_build: $(SRCFILE) $(INCFILE)
@@ -83,19 +88,19 @@ install: $(WORKDIR)/$(LIBFILE)
 	@-test -e $(LIBDIR)/$(MAINFILE) && rm $(LIBDIR)/$(MAINFILE)
 	ln -s $(LIBDIR)/$(LIBFILE) $(LIBDIR)/$(MAINFILE)
 
-
+	
 
 install_dev: $(INCFILE) man-pages
 	cp $(INCFILE) $(INCDIR)/
 
-
+	
 man-pages: manpages/librisp64.3 manpages/risp_addbuf.3 manpages/risp_addbuf_noparam.3 manpages/risp_add_command.3 manpages/risp_init.3 manpages/risp_shutdown.3 manpages/risp.3 manpages/risp_addbuf_int.3 manpages/risp_addbuf_str.3 manpages/risp_add_invalid.3 manpages/risp_process.3
 	@mkdir tmp.install
 	@cp manpages/* tmp.install/
 	@gzip tmp.install/*.3
 	cp tmp.install/*.3.gz $(MANPATH)/man3/
 	@rm tmp.install/*
-	@rmdir tmp.install
+	@rmdir tmp.install      
 	@echo "Man-pages Install complete."
 
 
