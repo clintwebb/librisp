@@ -379,7 +379,7 @@ int main(int argc, char **argv)
 	signal(SIGINT, sig_handler);
 	
 	// get an initialised risp structure.
-	risp_t *risp = risp_init(NULL);
+	RISP_PTR risp = risp_init();
 	assert(risp);
 
 	// add the callback routines for the commands we are going to receive.
@@ -534,8 +534,8 @@ int main(int argc, char **argv)
 	}
 
 	// clean up the risp structure.
-	risp = risp_shutdown(risp);
-	assert(risp == NULL);
+	risp_shutdown(risp);
+	risp = NULL;
 	
 	return 0;
 }

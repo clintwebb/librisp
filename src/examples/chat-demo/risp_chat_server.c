@@ -112,7 +112,7 @@ typedef struct __session_t {
 		struct event *event;
 	} in, out;
 
-	risp_t *risp;
+	RISP_PTR risp;
 	
 	// used to indicate that the session is closing even though there is an outgoing buffer that is 
 	// being sent.  When the buffer is emptied, then the connection should then be closed.
@@ -141,7 +141,7 @@ typedef struct {
 	struct event_base *ev_base;
 	struct event      *event;				
 	bool               verbose;
-	risp_t            *risp;
+	RISP_PTR           risp;
 	messages_t        *messages;
 } server_t;
 
@@ -1670,7 +1670,7 @@ int main(int argc, char **argv)
 	server_add_eventbase(server, main_event_base);
 
 	// Initialise the risp system.
-	risp_t *risp = risp_init(NULL);
+	RISP_PTR risp = risp_init();
 	assert(risp);
 	risp_add_invalid(risp, cmdInvalid);
 	risp_add_command(risp, CMD_NOP, 				&cmdNop);
