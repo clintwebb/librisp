@@ -1,0 +1,27 @@
+.\" man page for librisp64
+.\" Contact webb.clint@gmail.com to correct errors or omissions. 
+.TH risp_init 3 "18 July 2016" "3.20.00" "Initialize a RISP object to be used to process a stream of RISP encoded data"
+.SH NAME
+risp_init \- Initialize a RISP object to be used to process a stream of RISP encoded data.
+.SH SYNOPSIS
+.B #include <risp64.h>
+.sp
+.B RISP_PTR risp_init(RISP_PTR risp);
+.sp
+compile with the 
+.B -lrisp64
+option
+
+.SH DESCRIPTION
+.B risp_init()
+Initialises everything we need to initialise.   This will return a pointer to an internal structure that has been allocated and initialised.  This RISP_PTR should then be used to reference the risp instance that was created.  Multiple RISP instances can be created for multiple protocols or even layers of protocols.
+.SH SEE ALSO
+.BR risp_shutdown (3),
+.BR risp_add_invalid (3),
+.BR risp_add_command (3)
+.SH AUTHOR
+.nf
+Clint Webb (webb.clint@gmail.com)
+.br
+http://risp.rhokz.com/
+.fi

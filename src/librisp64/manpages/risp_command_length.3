@@ -1,0 +1,32 @@
+.\" man page for librisp64
+.\" Contact webb.clint@gmail.com to correct errors or omissions. 
+.TH risp_command_length 3 "18 July 2016" "3.20.00" "Return the minimum length a buffer would need to be to accept a specific command and data"
+.SH NAME
+risp_command_length \- Return the minimum length a buffer would need to be to accept a specific command and data.
+.SH SYNOPSIS
+.B #include <risp64.h>
+.sp
+.B risp_length_t risp_command_length(risp_command_t command, risp_length_t length);
+.sp
+compile with the 
+.B -lrisp64
+option
+
+.SH DESCRIPTION
+.B risp_command_length() 
+will assist with knowing how much space a command will need to be
+reserved for a buffer, this function will tell you how many bytes the 
+command will use.
+.sp
+
+.SH SEE ALSO
+.BR risp_init (3),
+.BR risp_addbuf_noparam (3),
+.BR risp_addbuf_int (3)
+.BR risp_addbuf_str (3)
+.SH AUTHOR
+.nf
+Clint Webb (webb.clint@gmail.com)
+.br
+http://risp.rhokz.com/
+.fi

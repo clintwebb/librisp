@@ -1,0 +1,27 @@
+.\" man page for librisp64
+.\" Contact webb.clint@gmail.com to correct errors or omissions. 
+.TH risp_shutdown 3 "18 July 2016" "3.20.00" "Destroy a RISP instance, freeing the resources allocated"
+.SH NAME
+risp_shutdown \- Destroy a RISP instance, freeing the resources allocated.
+.SH SYNOPSIS
+.B #include <risp64.h>
+.sp
+.B void risp_shutdown(RISP_PTR risp);
+.sp
+compile with the 
+.B -lrisp64
+option
+
+.SH DESCRIPTION
+.B risp_shutdown()
+cleans up the structure that were created by the library.  
+
+.SH SEE ALSO
+.BR risp_init (3),
+.BR risp_add_command (3)
+.SH AUTHOR
+.nf
+Clint Webb (webb.clint@gmail.com)
+.br
+http://risp.rhokz.com/
+.fi

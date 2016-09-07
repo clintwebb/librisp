@@ -1,0 +1,152 @@
+.\" man page for librisp64
+.\" Contact webb.clint@gmail.com to correct errors or omissions. 
+.TH risp_addbuf 3 "1 September 2016" "3.20.00" "Add RISP commands to a buffer"
+.SH NAME
+risp_addbuf \- Functions to add RISP commands to a buffer.
+.SH SYNOPSIS
+.B #include <risp64.h>
+.sp
+.B risp_length_t risp_addbuf_noparam(void *buffer, risp_command_t command);
+.br
+.B risp_length_t risp_addbuf_int(void *buffer, risp_command_t command, risp_int_t value);
+.br
+.B risp_length_t risp_addbuf_str(void *buffer, risp_command_t command, risp_length_t length, void *data);
+.sp
+compile with the 
+.B -lrisp64
+option
+
+.SH DESCRIPTION
+These functions add RISP commands to a buffer.  The buffer must be appropriately sized to accept the command.  See 
+.B risp_command_length()
+to determine how much space the buffer needs to add the command.  These functions will not do any buffer management.
+Each command ID is 16-bits (2 bytes), and different ranges of ID indicate what parameters follow.
+.sp
+Command ID Ranges:
+.br
+.PP
+.nf
+.RS
+0x0000 to 0x07ff - No Parameters
+.br
+0x8000 to 0x87ff - No Parameters
+.br
+0x0800 to 0x0fff - 1 byte integer ( 8-bit)
+.br
+0x1000 to 0x17ff - 2 byte integer (16-bit)
+.br
+0x2000 to 0x27ff - 4 byte integer (32-bit)
+.br
+0x4000 to 0x47ff - 8 byte integer (64-bit) 
+.br
+0x8800 to 0x8fff - 1 byte string-length (8-bit length param, max 255 bytes length string)
+.br
+0x9000 to 0x97ff - 2 byte string-length (16-bit length param, max 64k bytes length string)
+.br
+0xa000 to 0xa7ff - 4 byte string-length (32-bit length param, max 4gb bytes length string)
+.RE
+.fi
+.PP
+.sp
+.B risp_addbuf_noparam() 
+adds a command that does not expect any additional parameters.  Only command ID's in ranges 0x0000 to 0x07ff and 0x8000 to 0x87ff expect no parameters.
+.sp
+.B risp_addbuf_int() 
+adds a command that expects an integer parameter to follow. The high 5 bits of the command indicate how many bytes the integer parameter should be.  The 'value' param is a 64-bit long, but will only encode the number of bits specified by the command ID.
+.sp
+.B risp_addbuf_str() 
+adds a command that expects an integer parameter to follow (of a specific size determined by the command ID range).  The integer parameter then indicates the length of the string to follow.  The 'length' param is a long integer, however, it only encodes an integer of the size specified by the command ID.
+.sp
+.SH EXAMPLE
+.PP
+.nf
+.RS
+.sp
+#define CMD_SEND_MSG           0x4002
+.sp
+typedef struct {
+.br
+	char *buffer;
+.br
+	int buflen;
+.br 
+	int msgid;
+.br
+} session_t;
+.sp
+void cmdSendMsg(void *base, risp_int_t value)
+.br
+{
+.br
+	// The base pointer that is passed thru the library doesnt know about the session structure we 
+.br
+	// are using, so we need to make a cast-pointer for it.
+.br
+	session_t *session = (session_t *) base;
+.br
+	assert(session);
+.sp
+	// ... do something with the 'value'
+.br
+	session->msgid = value;
+.br
+}
+.sp
+void main(void) {
+.br
+	int leave = 0;
+.sp
+	RISP_PTR risp = risp_init();
+.sp
+	risp_add_command(risp, CMD_SEND_MSG,			&cmdSendMsg);
+.sp
+	// init the session (or whatever structure you want).
+.br
+	session_t = calloc(1, sizeof(session_t));
+.sp
+	while (leave == 0) {
+		// ... get a stream of risp data (from a socket, or disk, etc).
+.br
+		get_more_session_data(session);
+.sp
+		// risp_process will iterate through the stream and execute all the callbacks for each command in the stream.
+.br
+.B			risp_length_t processed = risp_process(risp, session, session->buflen, session->buffer);
+.br
+		if (processed < session->buflen) {
+.br
+			// we didn't process all the data in the buffer.  This means we haven't received it 
+.br
+			// all yet.  Move the un-processed data to the start of the buffer, and wait for the 
+.br
+			// rest to arrive.
+.br
+			session->buflen -= processed;
+.br
+			memmove(session->buffer, session->buffer + processed, session->buflen);
+.br
+		}
+.br
+		else {
+.br
+			session->buflen = 0;
+.br	
+		}
+.br
+	}
+.br
+}
+.sp
+.RE
+.fi
+.PP
+.SH SEE ALSO
+.BR risp_init (3),
+.BR risp_add_invalid (3),
+.BR risp_add_command (3)
+.SH AUTHOR
+.nf
+Clint Webb (webb.clint@gmail.com)
+.br
+http://risp.rhokz.com/
+.fi

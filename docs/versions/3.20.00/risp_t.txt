@@ -1,0 +1,12 @@
+risp_t is the structure that is used to define the risp environment.  It included all the callbacks and other initialized data.   It is in its own structure because the library could have many instances.   For example it is very normal practice to wrap a seperate protocol inside another... requiring different risp callback sets.
+
+risp_t is exposed in the header file, and therefore it may be tempting to manipulate it directly.  This should not be encouraged, and could very well break newer versions of hte library.
+
+To remove an avenue where it can be difficult to upgrade in the future, we will make it more difficult to go down that path.
+
+The risp_t structure therefore will be defined in the code file instead of the header.   
+The header will have a RISP object which is just a void *.  That void pointer when references is masked to a risp_t pointer.
+
+To ensure that things are passed correctly, we will include a salt to the header.  A random number that we define in code and set whenever the structure is initialised.  This can be checked to ensure that the pointer passed in, is actuall a RISP object.
+
+

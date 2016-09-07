@@ -1,0 +1,61 @@
+.\" man page for risp
+.\" Contact webb.clint@gmail.com to correct errors or omissions. 
+.TH risp 3 "18 July 2016" "3.20.00" "Description of the RISP based protocols, and introduction to the librisp64 library."
+.SH NAME
+RISP \- Description of the RISP based protocols, and introduction to the librisp64 library.
+.SH SYNOPSIS
+RISP is a streaming binary sub-protocol that is designed to be flexible and fast to process.  It is different to a structure-based protocol in several key ways, and is instead made up of simplistic commands that have known simplistic parameters.
+.sp
+.B Reduced Instruction Set Protocol (RISP)
+is very loosely modeled after the CPU archecture of a similar name, Reduced Instruction Set Computing (RISC).  The intention being to provide very basic primitives that can be used to build up more complicated protocols.
+.sp
+Text based protocols such as JSON and XML are popular sub-protocols because of their flexibility compared to protocols based on binary structures.   
+.sp
+However, using such text-based formats as part of a streaming protocol has some challenges.  Challenges such as knowing when each request is complete (HTTP based REST protocols provide the length of the payload in the headers, but again, the headers are a large overhead).  It is very difficult to stream a JSON or XML protocol without some sort of wrapper around it.   
+.sp
+When parsing such protocols, you typically load them into a structure, or assign callbacks for each individual peice of information.  The callbacks tend to be very generic (eg, for each node, do a callback which then determines what code path needs to be taken).  RISP systems provide different callbacks for each command used.
+.sp
+An additional problem with parsing text-based protocols is that you need to encode special characters such as quotes and unprintable characters.  This adds to the complexity and time taken to parse.
+.sp
+Rather than text based protocols, binary structure protocols are also very popular, as they tend to have the allure of being faster and more simple to process.  This is a misleading assumption, at least for enterprise, business critical, or compatible with other systems.   Although at first glance it may seem to be a simple process to simply take some data from a socket and put it into a structure.  However, it is rarely that simple.  Different systems use different encoding methods for integers (big endian and little endian), and therefore they should first have been put in network-byte-order for proper compatibility.  Additionally, structures in memory are often moved around and optimised by the compiler, and so that optimisation needs to be turned off for those structures.
+.sp
+The biggest problem with binary structures however, is future flexibility and changes.  How do you effectively make a change to a structure based protocol that is already in use?   You either need to wrap a complicated system to first determine what version of the protocol the two parties are using, etc.  This is rarely a simple problem to solve.   
+.sp
+RISP protocols can be used in multiple ways.   In many cases it's true philosophy can be taken literally, and each RISP command does just one small simple thing.  Multiple commands can then be used to accomplish some specific task.   For example, an authentication operation could be (in textual form)
+
+   USERNAME <username>
+   PASSCODE <passcode>
+   AUTHENTICATE
+.sp
+Alternatively, some protocols are more complex, and it makes sense to wrap sub-commands inside another RISP command.  The previous example would instead of 3 seperate commands that ties together perform an action, wrap the 2 data commands (which results in a binary string) into the main command.
+.sp
+   AUTHENTICATE <sub-block>
+     USERNAME <username>
+     PASSCODE <passcode>
+.sp
+This allows for very flexible protocols, another example, is you might allow for an encryption layer on top.
+   ENCRYPTED <>
+     KEY-ID <key>
+     ENCODING <encoding method>
+     DATA <>
+       AUTHENTICATE <>
+         USERNAME <username>
+         PASSCODE <passcode>
+.sp
+Additionally, the RISP layer in the protocol can include other sub-protocols and encoding in the payload.  You can use RISP to enable easier streaming, but the internal payload could be JSON for example.
+.SH Good Protocol design
+A very important feature of any protocol is the ability to add or change functionality to it.  the RISP sub-protocol will not automatically take care of that for you, but it does give you very powerful functionality to help.  Since it is encouraged to have small very specific instructions, they should be very precise in what they do.
+.sp
+When needing to add functionality to a protocol, never change the parts that already exist, but instead add to it.
+.sp
+Build in an ability to determine capabilities.  I suggest having a command that takes a 16-bit integer, and have it return a result indicating that it does or does not support that command.
+.SH SEE ALSO
+.BR librisp64 (3),
+.SH AUTHOR
+.nf
+Clint Webb (webb.clint@gmail.com)
+.br
+http://rhokz.com/
+.fi
+.SH HISTORY
+July 18, 2016 \- v3.20.0.

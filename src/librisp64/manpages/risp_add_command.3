@@ -1,0 +1,104 @@
+.\" man page for librisp64
+.\" Contact webb.clint@gmail.com to correct errors or omissions. 
+.TH risp_add_command 3 "18 July 2016" "3.20.00" "Add a handler for handling a specific command"
+.SH NAME
+risp_add_command \- Add a handler for handling a specific command.
+.SH SYNOPSIS
+.B #include <risp64.h>
+.sp
+.B void risp_add_command(RISP_PTR risp, risp_command_t command, void *callback);
+.sp
+compile with the 
+.B -lrisp64
+option
+
+.SH DESCRIPTION
+.B risp_add_command() 
+will set a callback handler that will be called to handle a specific command.  
+.sp
+Since internally, it is using an array of function pointers (the handlers), 
+risp does not know definitively that the function specified 
+expects the correct parameters.  If the callback function is not the correct 
+type for the command-style, then it will generally end up with a segfault.
+
+.SH EXAMPLE
+.sp
+#define CMD_SEND_MSG           0x4002
+.sp
+typedef struct {
+.br
+  int msgid;
+.br
+} session_t;
+.sp
+void cmdSendMsg(void *base, risp_int_t value)
+.br
+{
+.br
+	// The base pointer that is passed thru the library doesnt know about the session structure we 
+.br
+	// are using, so we need to make a cast-pointer for it.
+.br
+	session_t *session = (session_t *) base;
+.br
+	assert(session);
+.sp
+	// ... do something with the 'value'
+.br
+	session->msgid = value;
+.br
+}
+.sp
+void main(void) {
+.br
+    RISP_PTR risp;
+.br
+    risp = risp_init();
+.br
+.B		risp_add_command(risp, CMD_SEND_MSG,			&cmdSendMsg);
+.sp
+	// init the session (or whatever structure you want).
+.sp
+	session_t = calloc(1, sizeof(session_t));
+.sp
+	// ... get a stream of risp data (from a socket, or disk, etc).
+.br
+	char *buffer = ??
+.br
+	int buflen = ??
+.sp
+	risp_length_t processed = risp_process(risp, session, buflen, buffer);
+.br
+	if (processed < buflen) {
+.br
+		// we didn't process all the data in the buffer.  This means we haven't received it 
+.br
+		// all yet.  Move the un-processed data to the start of the buffer, and wait for the 
+.br
+		// rest to arrive.
+.br
+		buflen -= processed;
+.br
+		memmove(buffer, buffer + processed, buflen);
+.br
+	}
+.br
+	else {
+.br
+		buflen = 0;
+.br
+	}
+.br
+}
+.sp
+
+
+.SH SEE ALSO
+.BR risp_init (3),
+.BR risp_add_invalid (3)
+.SH AUTHOR
+.nf
+Clint Webb (webb.clint@gmail.com)
+.br
+http://risp.rhokz.com/
+.fi
