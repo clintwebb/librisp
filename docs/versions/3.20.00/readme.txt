@@ -1,11 +1,8 @@
-Release 3.20.00 is primarily geared towards providing support for handling large messages (by storing the stream in temporary files instead of in memory).
-Development work is starting 2016.07.02, and is expected to be released within 90 days.
+Release 3.20.00 is a small release primarily to add manpages for the various functions, and change the risp handle from a structure to 
+just a pointer.  Evevn though the structure contents are available in source, it makes it less tempting to modify the contents of it 
+without using the functions.
 
-Primary Branches:
- * large-messages
-
-Also Includes:
+Main Changes:
  * risp_t
  * manpages
  
-
