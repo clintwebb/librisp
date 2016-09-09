@@ -24,24 +24,24 @@
 #define __LIBRISP64_H
 
 
-/* 
- * Version 3.0 
- * 
- * Major change to the base protocol mappings to support 64-bit data, and restructure to provide 
- * more large-string parameters.   
- * 
- * Removed the functionality to store data within the library.  All operations should be handled 
- * externally.  We may introduce this feature, but limit it so that it only saves the data for 
- * entries that have been specifically set aside for it. 
+/*
+ * Version 3.0
+ *
+ * Major change to the base protocol mappings to support 64-bit data, and restructure to provide
+ * more large-string parameters.
+ *
+ * Removed the functionality to store data within the library.  All operations should be handled
+ * externally.  We may introduce this feature, but limit it so that it only saves the data for
+ * entries that have been specifically set aside for it.
 */
 
 /*
  * Version 2.0
- * 
- * Version 1.x did not buffer anything.  Instead it only supported callbacks. With this version, you 
- * only need to set a callback for commands that require an action, otherwise the content of the 
- * commands that do not have callbacks will be stored and retrieved when needed.   The retreival can 
- * be done in a macro, which means that it can be optimised for faster access (normally just a 
+ *
+ * Version 1.x did not buffer anything.  Instead it only supported callbacks. With this version, you
+ * only need to set a callback for commands that require an action, otherwise the content of the
+ * commands that do not have callbacks will be stored and retrieved when needed.   The retreival can
+ * be done in a macro, which means that it can be optimised for faster access (normally just a
  * pointer redirection).
 */
 
@@ -87,18 +87,18 @@ void risp_add_invalid(RISP_PTR risp, void *callback);
 // setup of callback commands
 void risp_add_command(RISP_PTR risp, risp_command_t command, void *callback);
 
-// providing data that needs to be processed and sent to the callback commands.  
+// providing data that needs to be processed and sent to the callback commands.
 // Will return the number of bytes that were processed.
 risp_length_t risp_process(RISP_PTR risp, void *base, risp_length_t length, const void *data);
 
 
-// The buffer functions will assist with adding a command to a buffer that is provided. 
+// The buffer functions will assist with adding a command to a buffer that is provided.
 risp_length_t risp_addbuf_noparam(void *buffer, risp_command_t command);
 risp_length_t risp_addbuf_int(void *buffer, risp_command_t command, risp_int_t value);
 risp_length_t risp_addbuf_str(void *buffer, risp_command_t command, risp_length_t length, void *data);
 
 
-// to assist with knowing how much space a command will need to be reserved for a buffer, this 
+// to assist with knowing how much space a command will need to be reserved for a buffer, this
 // function will tell you how many bytes the command will use.
 risp_length_t risp_command_length(risp_command_t command, risp_length_t length);
 

@@ -3,7 +3,7 @@
     librisp64
     see risp64.h for details.
     Copyright (C) 2015  Clinton Webb
-    
+
     This program is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
@@ -32,6 +32,8 @@
 #error "Incorrect header version.  code and header versions must match."
 #endif
 
+// A Random number that is applied to every risp_t structure to verify that the pointer is actually pointing to an initiated object.
+// NOTE: This identifier should change when functional changes are made to the structure.
 #define RISP_STRUCT_VERIFIER 8320987113
 
 
