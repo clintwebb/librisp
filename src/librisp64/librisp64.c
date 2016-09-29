@@ -46,6 +46,8 @@ typedef struct {
 	long long verifier;
 	risp_handler_t commands[RISP_MAX_USER_CMD+1];
 	void * invalid_callback;
+	int use_temp;
+	char *temppath;
 } risp_t;
 
 
@@ -80,21 +82,34 @@ RISP_PTR risp_init(void)
 	r = (risp_t *) malloc(sizeof(risp_t));
 	r->verifier = RISP_STRUCT_VERIFIER;
 
-
+	// Do this check, even though it is currently not needed, for when the code changes.
 	if (r->verifier != RISP_STRUCT_VERIFIER) {
 		// the verifier must be correct or we could be accessing incorrect memory location.
 		// Therefore we must return NULL if the assert is not caught.
 		assert(r->verifier == RISP_STRUCT_VERIFIER);
 		return(NULL);
 	}
+	
+	// Initially no temppath will be set, which means when a message is too large to be accepted, 
+	// it will be rejected, and if a reject callback has been specified that will be called.  
+	// If a temppath is supplied, then large messages will be stored as files before being processed.
+	r->use_temp = 0;
+	r->temppath = NULL;
+
+
+	// since we make some assumptions about the sizes of types, better verify and catch if anything 
+	// changes.   We need the iterator to be larger in size than the 2 bytes since we need to count 
+	// one more.
+	assert(RISP_MAX_USER_CMD == 0xffff);	// verify the command size is 2 bytes.
+	assert(sizeof(register unsigned > 2));	// verify that the iterator object is larger than 2 bytes.
 
 	
 	// we could simply memset the entire space, however, for completeness and to make it easier if 
 	// we add structure items later on that require something other than zero.
 	assert(r != NULL);
 	if (r != NULL) {
-		register unsigned short i;
-		for (i=0; i<RISP_MAX_USER_CMD; i++) {
+		register unsigned i;
+		for (i=0; i<=RISP_MAX_USER_CMD; i++) {
 			r->commands[i].callback = NULL;
 		}
 
@@ -123,13 +138,26 @@ void risp_shutdown(RISP_PTR r)
 			return;
 		}
 		
-		int i;
+		// if a temporary path was specified.
+		if (risp->temppath) {
+			free(risp->temppath);
+			risp->temppath = NULL;
+		}
+
+		// since we make some assumptions about the sizes of types, better verify and catch if anything 
+		// changes.   We need the iterator to be larger in size than the 2 bytes since we need to count 
+		// one more.
+		assert(RISP_MAX_USER_CMD == 0xffff);	// verify the command size is 2 bytes.
+		assert(sizeof(register unsigned > 2));	// verify that the iterator object is larger than 2 bytes.
+
+		register unsigned i;
 		for (i=0; i<RISP_MAX_USER_CMD; i++) {
 			risp->commands[i].callback = NULL;
 		}
 		
 		// we allocated the space, so we need to free it.
-		free(risp);	risp = NULL;
+		free(risp);	
+		risp = NULL;
 	}
 }
 
@@ -156,11 +184,46 @@ void risp_add_invalid(RISP_PTR r, void *callback)
 
 
 //-----------------------------------------------------------------------------
+// if the 'path' is NULL, then it will use the default TEMP location of the system.
+int risp_set_temppath(RISP_PTR r, char *path)
+{
+	assert(r);
+	if (r) {
+		risp_t *risp = (risp_t *) r;
+
+		assert(risp->verifier == RISP_STRUCT_VERIFIER);
+		if (risp->verifier == RISP_STRUCT_VERIFIER) {
+		
+			// since we are replacing the path either way, need to remove it if one already exists.
+			if (risp->temppath) {
+				free(risp->temppath);
+				risp->temppath =  NULL;
+			}
+			
+			if (path) {
+				risp->temppath = strdup(path);
+			}
+			
+			risp->use_temp = 1;
+		}
+	}
+}
+
+
+
+
+//-----------------------------------------------------------------------------
 // Add a command to our tables.  Since we are using an array of function 
 // pointers, risp does not know definitively that the function specified 
 // expects the correct parameters.  If the callback function is not the correct 
 // type for the command-style, then it will generally end up with a segfault.
-void risp_add_command(RISP_PTR r, risp_command_t command, void *callback) 
+//
+// The 'limit' is specifically for string based commands, and is not used for 
+// integer commands.  It sets a limit on the max size of the buffer that a 
+// command can process.  Any message larger than that size will be either 
+// rejected, or loaded into a temporary file if that capability has been 
+// enabled (see risp_set_temppath).
+void risp_add_command(RISP_PTR r, risp_command_t command, void *callback, risp_length_t limit) 
 {
 // 	printf("add_cmd: command:%u, max:%lu\n", command, RISP_MAX_USER_CMD);
 	
@@ -180,7 +243,7 @@ void risp_add_command(RISP_PTR r, risp_command_t command, void *callback)
 	}
 }
 
-
+// internal function used for debugging that make it easier to dump binary data, typically a stream.
 static void log_data(char *tag, unsigned char *data, int length)
 {
 	int i;
@@ -271,7 +334,7 @@ risp_length_t risp_process(RISP_PTR r, void *base, risp_length_t len, const void
 	// callback function prototypes.
 	void (*func_nul)(void *base) = NULL;
 	void (*func_int)(void *base, const risp_int_t value) = NULL;
-	void (*func_str)(void *base, const risp_length_t length, const void *data) = NULL;
+	void (*func_str)(void *base, const risp_length_t length, const void *data, int handle) = NULL;
 
 	risp_length_t left = len;
 	const unsigned char *ptr = (char *) data;

@@ -81,11 +81,24 @@ typedef void * RISP_PTR;
 RISP_PTR risp_init(void);
 void risp_shutdown(RISP_PTR risp);
 
+// if we want to store large messages in a file instead of memory, then this will enable that 
+// feature.  Pass in a NULL path and it will use the default system temporary location.  If a 
+// specific path is specified, it will create temporary files there instead.  This function 
+// will verify that it can create, use and remove temporary files.  If everything works 
+// correctly it will return a 0.  If any error occurs it will return a -1.
+int risp_set_temppath(RISP_PTR risp, char *path);
+
 // Setup a callback function to be called when an unexpected command is received.
 void risp_add_invalid(RISP_PTR risp, void *callback);
 
+// if a message is rejected because it is larger than the specified limits, then the callback should be executed.
+void risp_add_reject(RISP_PTR risp, void *callback);
+
+// Set a temporary path to store large messages.  Setting this will disable rejecting large messages.
+int risp_set_temppath(RISP_PTR r, char *path);
+
 // setup of callback commands
-void risp_add_command(RISP_PTR risp, risp_command_t command, void *callback);
+void risp_add_command(RISP_PTR risp, risp_command_t command, void *callback, risp_length_t limit);
 
 // providing data that needs to be processed and sent to the callback commands.
 // Will return the number of bytes that were processed.
