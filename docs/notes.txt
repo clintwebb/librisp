@@ -37,6 +37,21 @@ The next 4 bits of the first byte in the command, will indicate how many bytes t
    1 0010 xxxxxxxxxxx - indicates a string, where 2-byte length follows, then x bytes.
    1 0100 xxxxxxxxxxx - indicates a string, where 4-byte length follows, then x bytes.
 
+
+   
+   
+   
+0 000 indicates a non-param
+0 001 indicates a 1-byte param
+0 010 indicates a 2-byte param
+0 011 indicates a 4-byte param
+0 100 indicates a 8-byte param
+0 101 indicates a 16-byte param
+0 110 indicates a 32-byte param
+0 111 indicates a 64-byte param
+
+   
+   
 And so on.
 
 Represented another way.

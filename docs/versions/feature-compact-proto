@@ -1,0 +1,13 @@
+The idea of compacting the proto by making the sub-int part of the param be a binary-multiple rather than a direct count, has been floating around for a while, but it didn't quite fit nicely.
+
+Mostly because of the way of dealing with no-param commands.
+
+However, I thought of an easy method to use it.
+
+It is much more elegant... using 4 bits instead of 5 looks neater.
+Another way of thinking about it is...
+First bit indicates if a stream of data follows the param (using the param to indicate how much).
+Next 3 bits are a number that indicates how many times to shift a 1 to the left... and that indicates how many bytes the next param is (the integer).
+
+Unless the first 2 bits are '11', or the first 4 are '0111', those command ranges are special and indicate that no parameters follow it.  Also known as no-param or parameter-less commands.
+
