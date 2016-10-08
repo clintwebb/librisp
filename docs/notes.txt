@@ -20,74 +20,75 @@ The above example is 3 seperate operations when put together perform a single co
 BREAKDOWN OF BINARY PROTOCOL
 
 Each operation is made up of a Command, an optional Integer, followed by an optional binary stream.  
-The command is a 2-byte integer (network-byte-ordered).
-The high-byte of the command is a bitmask which indicates what kind of data will follow the command.
+When optional, the highest 4 bits in the command ID indicate what parameters follow.
+The command is a 2-byte integer (16-bit, network-byte-ordered).
+The highest 4 bits of the command is a bitmask which indicates what kind of data will follow the command.
 
-The first bit (highest bit) will indicate if the parameter is a string or not.  0 indicating that the parameter is an integer.  1 indicating that the parameter will be an integer length, followed by how ever many bytes was it indicated.
+The first bit (highest bit) will indicate if the parameter is a string or not.  
+ - 0 indicating that the parameter is an integer.  
+ - 1 indicating that the parameter will be an integer length, followed by how ever many bytes was it indicated.
 
-The next 4 bits of the first byte in the command, will indicate how many bytes that next param will be.  
-
-   0 0000 xxxxxxxxxxx - indicates a non-param command.
-   0 0001 xxxxxxxxxxx - indicates a 1-byte integer follows. 
-   0 0010 xxxxxxxxxxx - indicates a 2-byte integer follows.
-   0 0100 xxxxxxxxxxx - indicates a 4-byte integer follows.
-   0 1000 xxxxxxxxxxx - indicates an 8-byte integer follows.
-   1 0000 xxxxxxxxxxx - Could also indicate a non-param command.
-   1 0001 xxxxxxxxxxx - indicates a string, where a 1-byte length follows, and then x bytes. 
-   1 0010 xxxxxxxxxxx - indicates a string, where 2-byte length follows, then x bytes.
-   1 0100 xxxxxxxxxxx - indicates a string, where 4-byte length follows, then x bytes.
+The next 3 bits of the first byte in the command, will indicate how many bytes that next param will be.  
 
 
    
+   0 000 xxxxxxxxxxxx - indicates a 1-byte integer follows (char).  
+   0 001 xxxxxxxxxxxx - indicates a 2-byte integer follows (short).
+   0 010 xxxxxxxxxxxx - indicates a 4-byte integer follows (int).
+   0 011 xxxxxxxxxxxx - indicates an 8-byte integer follows (long long).
+   0 100 xxxxxxxxxxxx - indicates an 16-byte integer follows.
+   0 101 xxxxxxxxxxxx - indicates an 32-byte integer follows.
+   0 110 xxxxxxxxxxxx - indicates an 64-byte integer follows.
+   0 111 xxxxxxxxxxxx - indicates a non-param command.
+   1 000 xxxxxxxxxxxx - indicates a string, where a 1-byte length follows, and then x bytes. (max 255 bytes)
+   1 001 xxxxxxxxxxxx - indicates a string, where 2-byte length follows, then x bytes (max 64kb).
+   1 010 xxxxxxxxxxxx - indicates a string, where 4-byte length follows, then x bytes (max 4gb).
+   1 011 xxxxxxxxxxxx - indicates a string, where 8-byte length follows, then x bytes (max ??).
+   1 100 xxxxxxxxxxxx - Indicates a non-param command.
+   1 101 xxxxxxxxxxxx - Indicates a non-param command.
+   1 110 xxxxxxxxxxxx - Indicates a non-param command.
+   1 111 xxxxxxxxxxxx - Indicates a non-param command.
    
    
-0 000 indicates a non-param
-0 001 indicates a 1-byte param
-0 010 indicates a 2-byte param
-0 011 indicates a 4-byte param
-0 100 indicates a 8-byte param
-0 101 indicates a 16-byte param
-0 110 indicates a 32-byte param
-0 111 indicates a 64-byte param
-
    
-   
-And so on.
 
 Represented another way.
 
-   A single command with no params.
-      0000 0000 - first byte indicates a command with no params.
-      1010 0011 - command 163
+
+Command Style Ranges
+// 1 byte integer - 0x0000 to 0x0fff         0 000 xxxx xxxx
+// 2 byte integer - 0x1000 to 0x1fff         0 001 xxxx xxxx	
+// 4 byte integer - 0x2000 to 0x2fff         0 010 xxxx xxxx
+// 8 byte integer - 0x3000 to 0x3fff         0 011 xxxx xxxx
+// 16 byte integer - 0x4000 to 0x4fff        0 100 xxxx xxxx
+// 32 byte integer - 0x5000 to 0x5fff        0 101 xxxx xxxx
+// 64 byte integer - 0x6000 to 0x6fff        0 110 xxxx xxxx
+// No Parameters - 0x7000 to 0x7fff          0 111 xxxx xxxx
+// 1 byte-length string - 0x8000 to 0x8fff   1 000 xxxx xxxx
+// 2 byte-length string - 0x9000 to 0x9fff   1 001 xxxx xxxx
+// 4 byte-length string - 0xa000 to 0xafff   1 010 xxxx xxxx
+// 8 byte-length string - 0xb000 to 0xbfff   1 011 xxxx xxxx
+// No Parameters - 0xc000 to 0xffff          1 1xx xxxx xxxx
+
+
+
+   A command that has no params.
+     1101 0000 0000 0101 - Command ID 0xD005, in the range of 0xC000 to 0xFFFF, indicates that no params follow.
+
+   A single command with a 1 byte command.
+     0000 0000 0000 0100 - Command ID 0x0004, in the range of 0x0000 to 0x0fff, Indicates a single 1-byte integer should follow.
+     0010 0110           - 1 byte integer which is 46.
 
    A command that has a 2-byte integer.
-      0000 0010 - first byte indicates param will be a 2-byte int.
-      1010 0011 - command 163
-      0011 0100 - byte one of the integer param
-      1000 0001 - byte two of the integer param, which together becomes 13441
+     0001 0000 0010 0001 - Command ID 0x1021, in the range of 0x1000 to 0x1fff, indicates param will be a 2-byte int.
+     1000 0001 1110 0001 - 2-byte of the integer param, which together is 33249.
 
    A command that has a 2-byte length string.
-      1000 0010 - first byte indicates param will be 2-byte length string.
-      1010 0011 - command 163
-      0000 0000 - byte one of the string length.
-      0000 0011 - byte two of the string length.
-                          result is 3, meaning the string is 3 bytes long, to follow.
-      1011 0011 - byte one of 3-byte string
-      0101 1100 - byte two of 3-byte string
-      1110 0001 - byte three of 3-byte string.
+     1001 0000 0000 0001 - Command ID 0x9001, in the range of 0x9000 to 0x9fff, indicates param will be 2-byte length followed by binary stream of that length.
+     0000 0000 0000 0100 - 2-byte integer param, value is 4.  Indicates 4 bytes follow which is the string parameter.
+     0100 0001 0100 0010 - first 2 bytes of the binary stream.
+     0100 0011 0100 0100 - second 2 bytes.  Total string is actually "ABCD"
 
-
-The official library will only support certain bits as valid, as it will only be able to support certain lengths.  It might not make sense to use parameters with a 24-bit integer for example (which might make sense actually).  The protocol itself wont bar the use of such, but the implementation will likely cause a fault to indicate that the data stream is corrupt, if it finds bits set where it doesn't expect them. Otherwise, in theory, this also means you could implement it where you have a command with a 128 byte integer parameter to follow.  Who could possibly use a 128-byte integer anyway?
-
-However, you could be fancy, and use a 16-byte integer parameter, that when received gets broken up into two separate 8-byte params... therefore allowing you to send multiple parameters in a single command.  Which... actually goes against the principles of RISP, but there is nothing really stopping you from doing it, other than implementation.
-
-This is hopefully a little easier to understand than the previous version of the protocol which was similar, but much more compressed.
-
-The main disadvantage is that if you are using the protocol primarily for commands that use very small numbers or strings, then it will use slightly more bandwidth (an extra byte for each command).
-
-So there are now multiple ranges of only 256 different commands.... for each different parameter type to follow.   This means you can have 256 different commands in your protocol that use a single 16-bit integer as a parameter.  This doesn't sound like a lot, but after implementing multiple protocols using RISP, I discovered that most protocols only end up with a small limited number of commands anyway.   It would be a very complicated protocol indeed, that needs more than 256 commands for each param type.
-
-There are ways to expand the commands used also, that are quite easy, by nesting unique command-sets within other command-sets.  So there really is no constraint there.
 
 
 
