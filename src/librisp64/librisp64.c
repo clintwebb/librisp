@@ -423,21 +423,23 @@ risp_length_t risp_command_length(risp_command_t command, risp_length_t dataLeng
 
 	assert(dataLength >= 0);
 
-	unsigned char style = (command >> 12);
+	// the style part of the command is the highest 4-bits.
+	unsigned char style = (command >> (16-4));
 	
 	// start with the size of the command id.
-	length = 2;
+	length = sizeof(risp_command_t);
 	
-	// the lowest 4 bits are the length of the integer part.
-	unsigned int int_len = (style & 0xFF);
+	// the lowest 3 bits are the length (2 to the power of) of the integer part.
+	unsigned short int_bits = (style & 0x7);
+	unsigned short int_len = 1 << int_bits;
 	length += int_len;
 	
 	// if there was an integer part, AND it is also a string, then we need to add the dataLength part. 
-	if (int_len > 0 && (style & 0x100)) {
+	if (int_len > 0 && (style & 0x8)) {
 		length += dataLength;
 	}
 	
-	assert(length >= 0);
+	assert(length >= sizeof(risp_command_t));
 	return(length);
 }
 
