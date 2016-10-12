@@ -70,3 +70,7 @@ Command Style Ranges
 // 4 byte-length string - 0xa000 to 0xafff   1 010 xxxx xxxx
 // 8 byte-length string - 0xb000 to 0xbfff   1 011 xxxx xxxx
 // No Parameters - 0xc000 to 0xffff          1 1xx xxxx xxxx
+
+
+// No Parameters - 0x7000 to 0x7fff          0 111 xxxx xxxx
+// No Parameters - 0xc000 to 0xffff          1 1xx xxxx xxxx

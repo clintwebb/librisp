@@ -336,8 +336,7 @@ risp_length_t risp_process(RISP_PTR r, void *base, risp_length_t len, const void
 					
 					// Since the command was not within the no-param range, then we need to parse the integer size.
 					short int_bits = style & 0x7;
-					assert(int_bits < 8);
-					short int_size = 1 << int_bits;
+					short int_len = 1 << int_bits;
 // 					fprintf(stderr, "RISP: int_bits=%d\n", int_bits);
 //			 		fprintf(stderr, "RISP: int_len=%d\n", int_len);
 
@@ -515,12 +514,12 @@ risp_length_t risp_addbuf_int(void *buffer, risp_command_t command, risp_int_t v
 	assert(sizeof(risp_command_t) == 2);
 	
 	// first we need to make sure that this command really is an integer command, and not a string.
-	if (((command & 0x8000) == 0) && ((command & 0x7800) != 0)) {
+	if (command < 0x7000) {
 		/// command expects an integer parameter.
 
 		// get the length out of the command-id.
-		int int_len = (command & 0x7800) >> 11;
-		assert(int_len > 0);
+		short int int_bits = (command & 0x7000) >> 12;
+		short int int_len = 1 << int_bits;
 		
 		// the max size we can handle is the size of the 'value' param to this function... so we 
 		// will reject anything larger than that.
@@ -568,12 +567,13 @@ risp_length_t risp_addbuf_str(void *buffer, risp_command_t command, risp_length_
 	assert(sizeof(risp_command_t) == 2);
 	
 	// first we need to make sure that this command really is a string and not something invalid..
-	if (((command & 0x8000) != 0) && ((command & 0x7800) != 0)) {
+	if (command >= 0x8000 && command <= 0xbfff) {
 		
 		/// command expects an integer parameter, followed by data of that length.
 
-		int int_len = (command & 0x7800) >> 11;
-		assert(int_len > 0);
+		// get the length out of the command-id.
+		short int int_bits = (command & 0x7000) >> 12;
+		short int int_len = 1 << int_bits;
 		
 		// the max size we can handle is the size of the 'value' param to this function... so we 
 		// will reject anything larger than that.
