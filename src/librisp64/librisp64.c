@@ -28,13 +28,13 @@
 
 #include <stdio.h>
 
-#if (RISP_VERSION != 0x00032000)
+#if (RISP_VERSION != 0x00040000)
 #error "Incorrect header version.  code and header versions must match."
 #endif
 
 // A Random number that is applied to every risp_t structure to verify that the pointer is actually pointing to an initiated object.
 // NOTE: This identifier should change when functional changes are made to the structure.
-#define RISP_STRUCT_VERIFIER 8320987113
+#define RISP_STRUCT_VERIFIER 635706134
 
 
 typedef struct {
@@ -80,15 +80,6 @@ RISP_PTR risp_init(void)
 	r = (risp_t *) malloc(sizeof(risp_t));
 	r->verifier = RISP_STRUCT_VERIFIER;
 
-
-	if (r->verifier != RISP_STRUCT_VERIFIER) {
-		// the verifier must be correct or we could be accessing incorrect memory location.
-		// Therefore we must return NULL if the assert is not caught.
-		assert(r->verifier == RISP_STRUCT_VERIFIER);
-		return(NULL);
-	}
-
-	
 	// we could simply memset the entire space, however, for completeness and to make it easier if 
 	// we add structure items later on that require something other than zero.
 	assert(r != NULL);
@@ -117,7 +108,7 @@ void risp_shutdown(RISP_PTR r)
 	if (r != NULL) {
 		risp_t *risp = (risp_t *) r;
 
-		// The object referenced by the 
+		// Verify that the object referenced by the pointer appears to be a valid RISP structure.
 		assert(risp->verifier == RISP_STRUCT_VERIFIER);
 		if (risp->verifier != RISP_STRUCT_VERIFIER) {
 			return;
@@ -310,20 +301,15 @@ risp_length_t risp_process(RISP_PTR r, void *base, risp_length_t len, const void
 				
 				ptr += 2;
 				
-		//  		fprintf(stderr, "RISP: Command received: 0x%x\n", cmd);
-				// get rid of the bits from style we dont want when checking it.  Note that the style bits 
-				// make up the first 5 bits.
-				unsigned char style = cmd >> 11;
-				
-		//  		fprintf(stderr, "RISP: Style: 0x%x\n", style);
+				// There are certain ranges that are specifically set aside for commands that have no parameters.
+				// These are: 
+				// 		No Parameters - 0x7000 to 0x7fff          0 111 xxxx xxxx
+				// 		No Parameters - 0xc000 to 0xffff          1 1xx xxxx xxxx
+				// We can therefore check for specific bits in the style.
 
-				// get the length of the integer part of our command (if there is one), by simply stripping off the string-bit.
-				short int_len = style & 0xf;
-		//  		fprintf(stderr, "RISP: int_len=%d\n", int_len);
-				assert(int_len < 16);
-				assert(int_len <= 8);	// we cannot handle any integer value greater than 64-bit.
-				
-				if (int_len == 0) {
+				// Note that 0x7 and 0xC overlap, but thats ok, because the overlap is still within either range.
+				if ((cmd >= 0x7000 && cmd <= 0x7fff) || (cmd >= 0xc000)) {
+					
 					// there is no parameters, so we call the callback routine with just the command.
 					func_nul = risp->commands[cmd].callback;
 					if (func_nul) { (*func_nul)(base); }
@@ -334,61 +320,75 @@ risp_length_t risp_process(RISP_PTR r, void *base, risp_length_t len, const void
 					processed += completed;
 					// dont need to increase the ptr, because there was no parameters.
 				}
-				else if (left < (sizeof(risp_command_t) + int_len)) {
-					// there is not enough data in the buffer to process.  so we need to exit the loop and 
-					// not process any more.
-					cont = 0;
-				}
 				else {
 					
-					// this code only handles values up to risp_int_t size.
-					assert(int_len <= sizeof(risp_int_t));
-					// TODO: trim the int_len so that it will fit..
+// 					fprintf(stderr, "RISP: cmd=%llx\n", cmd);
 					
-					risp_int_t intvalue = 0;
-					register short counter;
-					for (counter=0; counter < int_len; counter++) {
-						
-						// shift the value to the left.
-						// not necessary for the first iteration, but it is cheaper than checking for it.
-						intvalue <<= 8;
-						
-						intvalue |= *ptr;
-						ptr ++;
-					}
+					// make sure we haven't made a mistake determining the non-param ranges.
+					assert((cmd < 0x7000 || cmd > 0x7fff) && cmd < 0xc000);
 					
-					// we have the first param.  Not sure yet if it is an integer parameter, or the length 
-					// of the string that will follow.  We will check the 'style' bitmap for that.
-					
-					if ((style >> 4) == 0) {
-						// this command is NOT a string, so we have all that we need.
-		// 				fprintf(stderr, "RISP. command is INTEGER(len:%d)\n", int_len);
-						func_int = risp->commands[cmd].callback;
-						if (func_int) { (*func_int)(base, intvalue); }
-						risp_length_t completed = (sizeof(risp_command_t) + int_len);
-		// 				fprintf(stderr, "Completed: %ld\n", completed);
-						left -= completed;
-						processed += completed;
-						// dont need to increase the ptr, because that was done when we were reading in the integer.
+					// Since the command was not within the no-param range, then we need to parse the integer size.
+					short int_bits = (cmd & 0x7000) >> 12;
+					short int_len = 1 << int_bits;
+// 					fprintf(stderr, "RISP: int_bits=%d\n", int_bits);
+//			 		fprintf(stderr, "RISP: int_len=%d\n", int_len);
+
+					if (left < (sizeof(risp_command_t) + int_len)) {
+						// there is not enough data in the buffer to process.  so we need to exit the loop and 
+						// not process any more.
+						cont = 0;
 					}
 					else {
-						// this command is a string, so we also need to get the rest of it.
-		// 				fprintf(stderr, "RISP. command is STRING(len:%d,%ld)\n", int_len, intvalue);
 						
-						// first, we need to make sure we have enough data.
-						if (left < (sizeof(risp_command_t) + int_len + intvalue)) {
-							// have not received all the data yet.  a 'cont' of zero will indicate not to continue the loop.
-							cont = 0;
+						// this code only handles values up to risp_int_t size.
+						assert(int_len <= sizeof(risp_int_t));
+						// TODO: trim the int_len so that it will fit..
+						
+						risp_int_t intvalue = 0;
+						register short counter;
+						for (counter=0; counter < int_len; counter++) {
+							
+							// shift the value to the left.
+							// not necessary for the first iteration, but it is cheaper than checking for it.
+							intvalue <<= 8;
+							
+							intvalue |= *ptr;
+							ptr ++;
 						}
-						else {
-							func_str = risp->commands[cmd].callback;
-							if (func_str) (*func_str)(base, intvalue, ptr);
-							ptr += intvalue;
-							risp_length_t completed = (sizeof(risp_command_t) + int_len + intvalue);
-		// 					fprintf(stderr, "Completed: %ld\n", completed);
+						
+						// we have the first param.  Not sure yet if it is an integer parameter, or the length 
+						// of the string that will follow.  We will check the 'style' bitmap for that.
+						
+						if ((cmd & 0x8000) == 0) {
+							// this command is NOT a string, so we have all that we need.
+			// 				fprintf(stderr, "RISP. command is INTEGER(len:%d)\n", int_len);
+							func_int = risp->commands[cmd].callback;
+							if (func_int) { (*func_int)(base, intvalue); }
+							risp_length_t completed = (sizeof(risp_command_t) + int_len);
+			// 				fprintf(stderr, "Completed: %ld\n", completed);
 							left -= completed;
 							processed += completed;
-							assert(left >= 0);
+							// dont need to increase the ptr, because that was done when we were reading in the integer.
+						}
+						else {
+							// this command is a string, so we also need to get the rest of it.
+			// 				fprintf(stderr, "RISP. command is STRING(len:%d,%ld)\n", int_len, intvalue);
+							
+							// first, we need to make sure we have enough data.
+							if (left < (sizeof(risp_command_t) + int_len + intvalue)) {
+								// have not received all the data yet.  a 'cont' of zero will indicate not to continue the loop.
+								cont = 0;
+							}
+							else {
+								func_str = risp->commands[cmd].callback;
+								if (func_str) (*func_str)(base, intvalue, ptr);
+								ptr += intvalue;
+								risp_length_t completed = (sizeof(risp_command_t) + int_len + intvalue);
+			// 					fprintf(stderr, "Completed: %ld\n", completed);
+								left -= completed;
+								processed += completed;
+								assert(left >= 0);
+							}
 						}
 					}
 				}
@@ -415,21 +415,23 @@ risp_length_t risp_command_length(risp_command_t command, risp_length_t dataLeng
 
 	assert(dataLength >= 0);
 
-	unsigned char style = (command >> (8+(8-5)));
+	// the style part of the command is the highest 4-bits.
+	unsigned char style = (command >> (16-4));
 	
 	// start with the size of the command id.
-	length = 2;
+	length = sizeof(risp_command_t);
 	
-	// the lowest 4 bits are the length of the integer part.
-	unsigned int int_len = (style & 0xFF);
+	// the lowest 3 bits are the length (2 to the power of) of the integer part.
+	unsigned short int_bits = (style & 0x7);
+	unsigned short int_len = 1 << int_bits;
 	length += int_len;
 	
 	// if there was an integer part, AND it is also a string, then we need to add the dataLength part. 
-	if (int_len > 0 && (style & 0x100)) {
+	if (int_len > 0 && (style & 0x8)) {
 		length += dataLength;
 	}
 	
-	assert(length >= 0);
+	assert(length >= sizeof(risp_command_t));
 	return(length);
 }
 
@@ -476,8 +478,8 @@ risp_length_t risp_addbuf_noparam(void *buffer, risp_command_t command)
 	assert(buffer);
 	unsigned char *ptr = buffer;
 
-	// first we need to make sure that this command really is an integer command, and not a string.
-	if ((command & 0x7800) == 0) {
+	// first we need to make sure that this command really is within neither the integer or string ranges.
+	if ((command >= 0x7000 && command <= 0x7fff) || command >= 0xc000) {
 		network_int(ptr, command, sizeof(risp_command_t));
 		ptr += sizeof(risp_command_t);
 		added += sizeof(risp_command_t);
@@ -505,12 +507,12 @@ risp_length_t risp_addbuf_int(void *buffer, risp_command_t command, risp_int_t v
 	assert(sizeof(risp_command_t) == 2);
 	
 	// first we need to make sure that this command really is an integer command, and not a string.
-	if (((command & 0x8000) == 0) && ((command & 0x7800) != 0)) {
+	if (command < 0x7000) {
 		/// command expects an integer parameter.
 
 		// get the length out of the command-id.
-		int int_len = (command & 0x7800) >> 11;
-		assert(int_len > 0);
+		short int int_bits = (command & 0x7000) >> 12;
+		short int int_len = 1 << int_bits;
 		
 		// the max size we can handle is the size of the 'value' param to this function... so we 
 		// will reject anything larger than that.
@@ -558,12 +560,13 @@ risp_length_t risp_addbuf_str(void *buffer, risp_command_t command, risp_length_
 	assert(sizeof(risp_command_t) == 2);
 	
 	// first we need to make sure that this command really is a string and not something invalid..
-	if (((command & 0x8000) != 0) && ((command & 0x7800) != 0)) {
+	if (command >= 0x8000 && command <= 0xbfff) {
 		
 		/// command expects an integer parameter, followed by data of that length.
 
-		int int_len = (command & 0x7800) >> 11;
-		assert(int_len > 0);
+		// get the length out of the command-id.
+		short int int_bits = (command & 0x7000) >> 12;
+		short int int_len = 1 << int_bits;
 		
 		// the max size we can handle is the size of the 'value' param to this function... so we 
 		// will reject anything larger than that.

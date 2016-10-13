@@ -86,45 +86,73 @@ PROTOCOL REQUIREMENTS
 COMMANDS
 ----------------------------------------------------------------------------------------------------
 
-// No Parameters  - 0x0000 to 0x07ff
+// 1 byte integer - 0x0000 to 0x0fff         0 000 xxxx xxxx
+// 2 byte integer - 0x1000 to 0x1fff         0 001 xxxx xxxx	
+// 4 byte integer - 0x2000 to 0x2fff         0 010 xxxx xxxx
+// 8 byte integer - 0x3000 to 0x3fff         0 011 xxxx xxxx
 
-    0x0000  NOP (Bi-directional)
+    0x3000  MSG_ID (Server to Client)
+
+        ID of a message.  Normally only sent from the Server to the client when it is sending a 
+        message that is being relayed.  
+
+    0x3001  LATEST_MSG_ID (Server to Client)
+
+        ID of the latest message in the system.  Normally sent from the server when the client is in 
+        NO_FOLLOW mode.  Also sent when the client sends a GET_LATEST_MSG_ID command.
+
+    0x3002  SEND_MSG (Client to Server)
+
+        Client sends this command to the server, when asking for a particular message to be sent.  
+        The parameter indicates the message ID that should be sent.
+
+    0x3003  SEND_SINCE (Client to Server)
+
+        Client requests that all messages since a certain msg ID to be sent.   If no messages to be 
+        sent, then server may only send a LATEST_MSG_ID command. 
+
+// 16 byte integer - 0x4000 to 0x4fff        0 100 xxxx xxxx
+// 32 byte integer - 0x5000 to 0x5fff        0 101 xxxx xxxx
+// 64 byte integer - 0x6000 to 0x6fff        0 110 xxxx xxxx
+// No Parameters - 0x7000 to 0x7fff          0 111 xxxx xxxx
+
+    0x7000  NOP (Bi-directional)
     
         Does nothing.  This command can be used for padding by 2 bytes (the size of a command). Not 
         very practical, and other NOP command sizes could be added to the protocol to add arbitrary 
         lengths of padding.  Can also be used to keep a connection alive, as any received data 
         (valid commands or not) will reset the counter.
     
-    0x0001  HELLO_ACK (Server to Client)
+    0x7001  HELLO_ACK (Server to Client)
 
         When the server receives a HELLO command, and it has the correct ID string, it will respond 
         with an ACK.  There is no HELLO_FAIL, as the server will simply close the connection if it 
         does not receive the correct ID string.
     
-    0x0002  GOODBYE (Client to Server)
+    0x7002  GOODBYE (Client to Server)
     
         If the client wants to close the connection, it can either close it, or send a GOODBYE 
         message to the server, and the server will close the connection.  In some cases it is 
         preferred that the client tells the server to close the connection.  This ensures that there 
         is no pending data to be received when the close takes place.
 
-    0x0003  ECHO (Client to Server)
+    0x7003  ECHO (Client to Server)
     
         Puts the session in ECHO mode, where new messages received by the server will be sent to all 
         the clients, including the client that sent the message.  This is not the default.
     
-    0x0004  NO_ECHO (Client to Server)
+    0x7004  NO_ECHO (Client to Server)
     
         Puts the session in NO_ECHO mode, where new messages received by the server will be sent to 
         all the clients except the one that sent the message.  This is the default mode.
     
-    0x0005  FOLLOW (Client to Server)
+    0x7005  FOLLOW (Client to Server)
     
         Puts the session in FOLLOW mode.  When new messages are received by the server, it will send 
         the entire message to this client session.  This allows a client to receive the messages in 
         the most efficient manner.  (DEFAULT)
     
-    0x0006  NO_FOLLOW (Client to Server)
+    0x7006  NO_FOLLOW (Client to Server)
     
         Puts the session in NO_FOLLOW mode (the default), where the client will receive a 
         LATEST_MSG_ID command when new commands come in, but that only indicates the latest msg ID, 
@@ -132,7 +160,7 @@ COMMANDS
         pending, but not necessarily receive them.  The client can request particular messages, or 
         all the messages since a particular ID.
 
-    0x0007  NO_UPDATE (Client to Server)
+    0x7007  NO_UPDATE (Client to Server)
 
         Similar to NO_FOLLOW except it also does not send the LATEST_MSG_ID command.  The client, in 
         order to get updates, will need to send the GET_LATEST_MSG_ID command to find out what the 
@@ -145,40 +173,15 @@ COMMANDS
         NOTE: In this mode, if clients send a message they still get the SENT_MSG_ID command.
 
     
-    0x0008  GET_LATEST_MSG_ID (Client to Server)
+    0x7008  GET_LATEST_MSG_ID (Client to Server)
     
         Tells the server to send a LATEST_MSG_ID commmand to indicate what the latest msg ID is.  
         Commonly used when in NO_UPDATE mode to periodically check for new messages.
     
-// No Parameters  - 0x8000 to 0x87ff 
-// 1 byte integer - 0x0800 to 0x0fff  ( 8-bit)
-// 2 byte integer - 0x1000 to 0x17ff  (16-bit)
-// 4 byte integer - 0x2000 to 0x27ff  (32-bit)
-// 8 byte integer - 0x4000 to 0x47ff  (64-bit) 
 
-    0x4000  MSG_ID (Server to Client)
+// 1 byte-length string - 0x8000 to 0x8fff   1 000 xxxx xxxx
 
-        ID of a message.  Normally only sent from the Server to the client when it is sending a 
-        message that is being relayed.  
-
-    0x4001  LATEST_MSG_ID (Server to Client)
-
-        ID of the latest message in the system.  Normally sent from the server when the client is in 
-        NO_FOLLOW mode.  Also sent when the client sends a GET_LATEST_MSG_ID command.
-
-    0x4002  SEND_MSG (Client to Server)
-
-        Client sends this command to the server, when asking for a particular message to be sent.  
-        The parameter indicates the message ID that should be sent.
-
-    0x4003  SEND_SINCE (Client to Server)
-
-        Client requests that all messages since a certain msg ID to be sent.   If no messages to be 
-        sent, then server may only send a LATEST_MSG_ID command. 
-
-// 1 byte string  - 0x8800 to 0x8fff  (max 255 length)
-
-    0x8800  HELLO (Client to Server)
+    0x8000  HELLO (Client to Server)
 
         Authentication (although admittedly almost non-existant) ensures that the client and server 
         are attempting to talk correctly.  The string supplied must be "RISP Server".  There is no 
@@ -192,7 +195,7 @@ COMMANDS
                connections come in, process the HELLO command, and depending on the string, simply 
                shuffle all following traffic (including the HELLO) to different listeners.
 
-    0x8801  NAME (Bi-directional)
+    0x8001  NAME (Bi-directional)
 
         Sets the name of the message.  When sent from the client, the server will remember the name 
         for the session.  The client can send it as many times as it wants, and the server will only 
@@ -201,9 +204,9 @@ COMMANDS
         When sent from the Server, it will be sent prior to a Message command that was relayed from 
         another client.
         
-// 2 byte string  - 0x9000 to 0x97ff  (max 64k length)
+// 2 byte-length string - 0x9000 to 0x9fff   1 001 xxxx xxxx
 
-    0x9000  MESSAGE  (Bi-directional)
+	0x9000  MESSAGE  (Bi-directional)
     
         When sent from a client, will take that parameter, and pass it (along with the msg ID and 
         name) to the other clients, depending on their FOLLOW or UPDATE modes.
@@ -218,7 +221,10 @@ COMMANDS
         followed by the multiple messages.  Only when messages are being sent from different names, 
         will those entries also be included.
     
-// 4 byte string  - 0xa000 to 0xa7ff  (max 4gb length)
+// 4 byte-length string - 0xa000 to 0xafff   1 010 xxxx xxxx
+// 8 byte-length string - 0xb000 to 0xbfff   1 011 xxxx xxxx
+// No Parameters - 0xc000 to 0xffff          1 1xx xxxx xxxx
+
 
 
 ----------------------------------------------------------------------------------------------------

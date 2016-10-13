@@ -259,6 +259,7 @@ int main(int argc, char **argv)
 		"p:" /* port to connect to */
 		"n:" /* name of the message sender */
 		"m:" /* message to send */
+		"h"  /* command usage */
 	)) != -1) {
 		switch (c) {
 			case 'p':
@@ -277,6 +278,10 @@ int main(int argc, char **argv)
 				message = strdup(optarg);
 				assert(message);
 				break;
+			case 'h':
+				printf("Usage: ./risp_chat_send -s [server] -p [port] -n \"name of sender\" -m \"Message\"\n\n");
+				exit(1);
+				break;
 			default:
 				fprintf(stderr, "Illegal argument \"%c\"\n", c);
 				return 1;
@@ -294,7 +299,7 @@ int main(int argc, char **argv)
 	}
 	else {
 
-		printf("Connected to server.\n");
+// 		printf("Connected to server.\n");
 		
 		// to simplify this process, we will join all the commands together.  We will not wait for responses.
 
@@ -352,7 +357,7 @@ int main(int argc, char **argv)
 		buflen += len;
 		assert(buflen <= bufmax);
 		
-		printf("Sending %d bytes to server.\n", buflen);
+// 		printf("Sending %d bytes to server.\n", buflen);
 		
 		// now that the we have the RISP stream created for the command, we need to send it.
 		if (sock_send(handle, buffer, buflen) != 0) {
@@ -364,7 +369,7 @@ int main(int argc, char **argv)
 
 			// now we simply process the socket until it closes.  We dont actually care about processing the data received.
 			while (recv(handle, buffer, bufmax, 0) != 0) {
-				printf("Waiting...\n");
+// 				printf("Waiting...\n");
 			}
 		
 			close(handle);

@@ -25,6 +25,16 @@
 
 
 /*
+ * Version 4.0
+ * 
+ * Major (and hopefully final) change to the base protocol.   The change is intended to remove a 
+ * significant range of ID's that will never be used in reality (5-byte integers for example), and 
+ * instead provide more of the ranges that people will be using.  The 4-bits that indicate the byte 
+ * length of the integer that follows is being changed to a 3-bit multiple (2 to the power of).
+ * 
+*/
+
+/*
  * Version 3.0
  *
  * Major change to the base protocol mappings to support 64-bit data, and restructure to provide
@@ -52,8 +62,8 @@
 #include <stdint.h>
 
 
-#define RISP_VERSION 0x00032000
-#define RISP_VERSION_NAME "v3.20.00"
+#define RISP_VERSION 0x00040000
+#define RISP_VERSION_NAME "v4.00.00"
 
 // the RISP commands are 16-bit integers.
 #define RISP_MAX_USER_CMD    (0xffff)
@@ -70,6 +80,8 @@ typedef int_least64_t risp_int_t;
 typedef unsigned char risp_data_t;	// will be used as a pointer.
 
 
+///////////////////////////////////////////
+// RISP instance handle.   
 typedef void * RISP_PTR;
 
 
