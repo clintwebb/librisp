@@ -301,14 +301,6 @@ risp_length_t risp_process(RISP_PTR r, void *base, risp_length_t len, const void
 				
 				ptr += 2;
 				
-		// 		fprintf(stderr, "RISP: Command received: 0x%x\n", cmd);
-				// get rid of the bits from style we dont want when checking it.  
-				// Note that the style bits make up the first 4 bits, so we shift it down by 12.
-				unsigned char style = cmd >> 12;
-				
-		// 		fprintf(stderr, "RISP: Style: 0x%x\n", style);
-
-				
 				// There are certain ranges that are specifically set aside for commands that have no parameters.
 				// These are: 
 				// 		No Parameters - 0x7000 to 0x7fff          0 111 xxxx xxxx
@@ -316,8 +308,7 @@ risp_length_t risp_process(RISP_PTR r, void *base, risp_length_t len, const void
 				// We can therefore check for specific bits in the style.
 
 				// Note that 0x7 and 0xC overlap, but thats ok, because the overlap is still within either range.
-				if (style & 0x7 || style & 0xc) {
-					assert((cmd >= 0x7000 && cmd <= 0x7fff) || (cmd >= 0xc000));
+				if ((cmd >= 0x7000 && cmd <= 0x7fff) || (cmd >= 0xc000)) {
 					
 					// there is no parameters, so we call the callback routine with just the command.
 					func_nul = risp->commands[cmd].callback;
@@ -331,11 +322,13 @@ risp_length_t risp_process(RISP_PTR r, void *base, risp_length_t len, const void
 				}
 				else {
 					
+// 					fprintf(stderr, "RISP: cmd=%llx\n", cmd);
+					
 					// make sure we haven't made a mistake determining the non-param ranges.
-					assert((cmd < 0x7000 && cmd > 0x7fff) && cmd < 0xc000);
+					assert((cmd < 0x7000 || cmd > 0x7fff) && cmd < 0xc000);
 					
 					// Since the command was not within the no-param range, then we need to parse the integer size.
-					short int_bits = style & 0x7;
+					short int_bits = (cmd & 0x7000) >> 12;
 					short int_len = 1 << int_bits;
 // 					fprintf(stderr, "RISP: int_bits=%d\n", int_bits);
 //			 		fprintf(stderr, "RISP: int_len=%d\n", int_len);
@@ -485,8 +478,8 @@ risp_length_t risp_addbuf_noparam(void *buffer, risp_command_t command)
 	assert(buffer);
 	unsigned char *ptr = buffer;
 
-	// first we need to make sure that this command really is an integer command, and not a string.
-	if ((command & 0x7800) == 0) {
+	// first we need to make sure that this command really is within neither the integer or string ranges.
+	if ((command >= 0x7000 && command <= 0x7fff) || command >= 0xc000) {
 		network_int(ptr, command, sizeof(risp_command_t));
 		ptr += sizeof(risp_command_t);
 		added += sizeof(risp_command_t);

@@ -285,7 +285,9 @@ int sendHello(int handle)
 	// to authenticate, we simply must provide the proper HELLO string.  
 	char hello_str[] = "RISP Server";
 	
-	risp_length_t len = risp_addbuf_str(buffer, CMD_HELLO, strlen(hello_str), hello_str);
+	int slen = strlen(hello_str);
+	assert(slen > 0);
+	risp_length_t len = risp_addbuf_str(buffer, CMD_HELLO, slen, hello_str);
 	assert(len > 0);
 	
 	// now that the we have the RISP stream created for the command, we need to send it.
@@ -355,7 +357,7 @@ int main(int argc, char **argv)
 
 	// get the command line options.
 	int c;
-	while ((c = getopt(argc, argv, "p:s:")) != -1) {
+	while ((c = getopt(argc, argv, "p:s:h")) != -1) {
 		switch (c) {
 			case 'p':
 				port = atoi(optarg);
@@ -448,7 +450,7 @@ int main(int argc, char **argv)
 			// send a NOP to keep the connection alive.
 			char *ptr = buffer + used;
 			int avail = max - used;
-			fprintf(stderr, "About to recv.  avail=%d\n", avail);
+// 			fprintf(stderr, "About to recv.  avail=%d\n", avail);
 			int result = recv(handle, ptr, avail, MSG_DONTWAIT);
 // 			printf("Recv: result=%d, used=%d, max=%d\n", result, used, max);
 			if (result < 0) {
@@ -476,16 +478,16 @@ int main(int argc, char **argv)
 				assert(used <= max);
 				
 				// if we have some data received, then we need to process it.
-				fprintf(stderr, "Processing: %d\n", used);
+// 				fprintf(stderr, "Processing: %d\n", used);
 				risp_length_t processed = risp_process(risp, &data, used, buffer);
- 				fprintf(stderr, "Processed: %ld\n", processed);
+//  				fprintf(stderr, "Processed: %ld\n", processed);
 				assert(processed >= 0);
 				assert(processed <= used);
 				
 				if (processed < used) { 
 					// Our commands have probably been fragmented.
 					
-					fprintf(stderr, "Fragmented commands: processed=%ld, used=%d, max=%d\n", processed, used, max);
+// 					fprintf(stderr, "Fragmented commands: processed=%ld, used=%d, max=%d\n", processed, used, max);
 					fflush(stdout);
 					
 					if (processed > 0) {
@@ -496,7 +498,7 @@ int main(int argc, char **argv)
 						size_t length = used-processed;
 						assert((processed + length) == used);
 						
-						fprintf(stderr, "Moving data.  length=%ld\n", length);
+// 						fprintf(stderr, "Moving data.  length=%ld\n", length);
 						
 						memmove(buffer, ptr, length);
 						
@@ -504,7 +506,7 @@ int main(int argc, char **argv)
 						assert(used > 0);
 						assert(used < max);
 						
-						fprintf(stderr, "After move. used=%d, max=%d\n", used, max);
+// 						fprintf(stderr, "After move. used=%d, max=%d\n", used, max);
 					}
 				} 
 				else { used = 0; }
