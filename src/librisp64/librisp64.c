@@ -422,8 +422,9 @@ risp_length_t risp_command_length(risp_command_t command, risp_length_t dataLeng
 	length = sizeof(risp_command_t);
 	
 	// the lowest 3 bits are the length (2 to the power of) of the integer part.
-	unsigned short int_bits = (style & 0x7);
-	unsigned short int_len = 1 << int_bits;
+	unsigned char int_bits = (style & 0x7);
+	assert(int_bits < 8);
+	unsigned char int_len = 1 << int_bits;
 	length += int_len;
 	
 	// if there was an integer part, AND it is also a string, then we need to add the dataLength part. 
