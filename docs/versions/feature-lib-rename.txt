@@ -1,0 +1,8 @@
+One last change I'm going to make, is the original library was called librisp, but that only supported 32-bit integers.
+
+So I made librisp64 which changed the protocol to support 64-bit integers.
+
+But... now the '64' doesn't really mean much as the protocol now supports way more than 64...  so I'm going to change the library name 
+back to librisp, instead of librisp64
+
+This feature wont change the sub-protocol at all.
