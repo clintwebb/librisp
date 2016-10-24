@@ -36,7 +36,7 @@
 #include <unistd.h>			// fcntl, close
 
 // Include the risp library.
-#include <risp64.h>
+#include <risp.h>
 
 #include "risp_chat_prot.h"
 

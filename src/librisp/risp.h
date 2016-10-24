@@ -20,8 +20,8 @@
 */
 //-----------------------------------------------------------------------------
 
-#ifndef __LIBRISP64_H
-#define __LIBRISP64_H
+#ifndef __LIBRISP_H
+#define __LIBRISP_H
 
 
 /*

@@ -1,7 +1,7 @@
 //-----------------------------------------------------------------------------
 /*
-    librisp64
-    see risp64.h for details.
+    librisp
+    see risp.h for details.
     Copyright (C) 2015  Clinton Webb
 
     This program is distributed in the hope that it will be useful,
@@ -18,7 +18,7 @@
 
 
 
-#include "risp64.h"
+#include "risp.h"
 
 #include <stdlib.h>
 #include <string.h>

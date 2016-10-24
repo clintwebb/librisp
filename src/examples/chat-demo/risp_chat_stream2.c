@@ -40,7 +40,7 @@
 #include <sys/socket.h>		// recv, inet_addr, socket, connect, send
 #include <unistd.h>			// fcntl, close, getopt
 
-#include <risp64.h>
+#include <risp.h>
 
 #include "risp_chat_prot.h"
 
