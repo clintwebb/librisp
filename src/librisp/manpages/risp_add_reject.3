@@ -1,0 +1,33 @@
+.\" man page for librisp
+.\" Contact webb.clint@gmail.com to correct errors or omissions. 
+.TH risp_add_reject 3 "14 September 2016" "3.30.00" "Set a callback function to be called if a message is rejected because it is larger than the specified limits"
+.SH NAME
+risp_add_reject \- Set a callback function to be called if a message is rejected because it is larger than the specified limits.
+.SH SYNOPSIS
+.B #include <risp.h>
+.sp
+.B void risp_add_reject(RISP_PTR risp, void *callback);
+
+.sp
+compile with the 
+.B -lrisp
+option
+
+.SH DESCRIPTION
+.B risp_add_reject() 
+will set a callback function to be called if a message is rejected because it is larger than the specified limits.   If a Temporary path has been set (
+.B see risp_set_temppath
+).
+.sp
+
+.SH SEE ALSO
+.BR risp_init (3),
+.BR risp_add_invalid (3),
+.BR risp_set_temppath (3),
+.BR risp_add_reject (3)
+.SH AUTHOR
+.nf
+Clint Webb (webb.clint@gmail.com)
+.br
+http://risp.rhokz.com/
+.fi

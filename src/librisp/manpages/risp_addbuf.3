@@ -1,10 +1,10 @@
-.\" man page for librisp64
+.\" man page for librisp
 .\" Contact webb.clint@gmail.com to correct errors or omissions. 
-.TH risp_addbuf 3 "1 September 2016" "3.20.00" "Add RISP commands to a buffer"
+.TH risp_addbuf 3 "25 October 2016" "4.00.00" "Add RISP commands to a buffer"
 .SH NAME
 risp_addbuf \- Functions to add RISP commands to a buffer.
 .SH SYNOPSIS
-.B #include <risp64.h>
+.B #include <risp.h>
 .sp
 .B risp_length_t risp_addbuf_noparam(void *buffer, risp_command_t command);
 .br
@@ -12,8 +12,8 @@ risp_addbuf \- Functions to add RISP commands to a buffer.
 .br
 .B risp_length_t risp_addbuf_str(void *buffer, risp_command_t command, risp_length_t length, void *data);
 .sp
-compile with the 
-.B -lrisp64
+compile with the
+.B -lrisp
 option
 
 .SH DESCRIPTION
@@ -37,7 +37,7 @@ Command ID Ranges:
 .br
 0x2000 to 0x27ff - 4 byte integer (32-bit)
 .br
-0x4000 to 0x47ff - 8 byte integer (64-bit) 
+0x4000 to 0x47ff - 8 byte integer (64-bit)
 .br
 0x8800 to 0x8fff - 1 byte string-length (8-bit length param, max 255 bytes length string)
 .br
@@ -130,7 +130,7 @@ void main(void) {
 		else {
 .br
 			session->buflen = 0;
-.br	
+.br
 		}
 .br
 	}

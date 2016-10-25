@@ -1,10 +1,10 @@
-.\" man page for librisp64
+.\" man page for librisp
 .\" Contact support@opencluster.org to correct errors or omissions. 
-.TH librisp64 3 "18 July 2016" "3.20.00" "Library for creating and parsing a RISP based stream."
+.TH librisp 3 "25 October 2016" "4.00.00" "Library for creating and parsing a RISP based stream."
 .SH NAME
-librisp64 \- Library for creating and parsing a RISP based stream.
+librisp \- Library for creating and parsing a RISP based stream.
 .SH SYNOPSIS
-#include <risp64.h>
+#include <risp.h>
 .sp
 .B RISP_PTR risp_init(RISP_PTR risp);
 .br
@@ -25,12 +25,12 @@ librisp64 \- Library for creating and parsing a RISP based stream.
 .B risp_length_t risp_command_length(risp_command_t command, risp_length_t length);
 .sp
 compile with the 
-.B -lrisp64
+.B -lrisp
 option
 .SH DESCRIPTION
-.B librisp64
+.B librisp
 is a library that can encode and decode RISP based protocols.  The general idea of RISP is that each different peice of data that is needed for a protocol is broken down into seperate simple commands that can be combined to provide all the functionality of the protocol.   
-.B librisp64
+.B librisp
 gives you the functionality to add the individual commands to a buffer.  It also fascilitates the handling and decoding of a RISP stream.  For each command, a callback function is specified, and when a buffer of received stream data is processed, it will call the appropriate callback function for each command.
 .sp
 
@@ -50,7 +50,5 @@ gives you the functionality to add the individual commands to a buffer.  It also
 .nf
 Clint Webb (webb.clint@gmail.com)
 .br
-http://rhokz.com/
+http://opencluster.org/risp/
 .fi
-.SH HISTORY
-August 29, 2016 \- v3.20.

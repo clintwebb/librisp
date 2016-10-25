@@ -1,0 +1,36 @@
+.\" man page for librisp
+.\" Contact webb.clint@gmail.com to correct errors or omissions. 
+.TH risp_set_temppath 3 "14 September 2016" "3.30.00" "Set a path to temporarily store large messages"
+.SH NAME
+risp_set_temppath \- Set a path to temporarily store large messages.
+.SH SYNOPSIS
+.B #include <risp.h>
+.sp
+.B int risp_set_temppath(RISP_PTR r, char *path);
+.sp
+compile with the 
+.B -lrisp
+option
+
+.SH DESCRIPTION
+.B risp_set_temppath() 
+will set a location to store temporary files.  These files will contain data for large messages that exceed the size limit that was specified.  
+.sp
+Some systems have limited memory available to handle the messages that arrive.  Since it is possible to send very large strings, we want to be able to handle it gracefully.  Especially since some applications can stream multiple commands into another single command.
+.sp 
+Passing a parameter of 
+.B NULL 
+will indicate that the default TEMP location will be used.  Specifying a specific path means that it will be used instead.
+.sp
+NOTE: Passing in a parameter of NULL does not cancel this setting.
+.sp
+.SH SEE ALSO
+.BR risp_init (3),
+.BR risp_add_invalid (3),
+.BR risp_add_reject (3)
+.SH AUTHOR
+.nf
+Clint Webb (webb.clint@gmail.com)
+.br
+http://risp.rhokz.com/
+.fi

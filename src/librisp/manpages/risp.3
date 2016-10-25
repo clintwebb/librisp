@@ -1,8 +1,8 @@
 .\" man page for risp
 .\" Contact webb.clint@gmail.com to correct errors or omissions. 
-.TH risp 3 "18 July 2016" "3.20.00" "Description of the RISP based protocols, and introduction to the librisp64 library."
+.TH risp 3 "18 July 2016" "3.20.00" "Description of the RISP based protocols, and introduction to the librisp library."
 .SH NAME
-RISP \- Description of the RISP based protocols, and introduction to the librisp64 library.
+RISP \- Description of the RISP based protocols, and introduction to the librisp library.
 .SH SYNOPSIS
 RISP is a streaming binary sub-protocol that is designed to be flexible and fast to process.  It is different to a structure-based protocol in several key ways, and is instead made up of simplistic commands that have known simplistic parameters.
 .sp
@@ -50,12 +50,10 @@ When needing to add functionality to a protocol, never change the parts that alr
 .sp
 Build in an ability to determine capabilities.  I suggest having a command that takes a 16-bit integer, and have it return a result indicating that it does or does not support that command.
 .SH SEE ALSO
-.BR librisp64 (3),
+.BR librisp (3),
 .SH AUTHOR
 .nf
-Clint Webb (webb.clint@gmail.com)
+Clint Webb (clint@opencluster.org)
 .br
-http://rhokz.com/
+http://risp.opencluster.org/
 .fi
-.SH HISTORY
-July 18, 2016 \- v3.20.0.
