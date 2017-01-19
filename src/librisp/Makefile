@@ -82,6 +82,7 @@ install: $(WORKDIR)/$(LIBFILE)
 	cp $(WORKDIR)/$(LIBFILE) $(LIBDIR)/
 	@-test -e $(LIBDIR)/$(MAINFILE) && rm $(LIBDIR)/$(MAINFILE)
 	ln -s $(LIBDIR)/$(LIBFILE) $(LIBDIR)/$(MAINFILE)
+	ldconfig
 
 
 

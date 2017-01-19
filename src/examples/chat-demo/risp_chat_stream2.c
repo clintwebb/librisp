@@ -416,7 +416,7 @@ int main(int argc, char **argv)
 	signal(SIGINT, sig_handler);
 	
 	// get an initialised risp structure.
-	RISP_PTR risp = risp_init();
+	RISP risp = risp_init();
 	assert(risp);
 
 	// add the callback routines for the commands we are going to receive.

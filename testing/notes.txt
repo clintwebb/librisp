@@ -1,0 +1,6 @@
+Before releasing any new releases, they must go through a testing phase.
+
+To do this, we compile the current code, install it.  Then we compile the chat example.  We then start up the chat server, and send 
+things to it, and verify that we got appropriate output and nothing crashed.
+
+

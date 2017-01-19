@@ -82,7 +82,7 @@ typedef unsigned char risp_data_t;	// will be used as a pointer.
 
 ///////////////////////////////////////////
 // RISP instance handle.   
-typedef void * RISP_PTR;
+typedef void * RISP;
 
 
 
@@ -90,18 +90,18 @@ typedef void * RISP_PTR;
 // declare the public functions.
 
 // init and shutdown.
-RISP_PTR risp_init(void);
-void risp_shutdown(RISP_PTR risp);
+RISP risp_init(void);
+void risp_shutdown(RISP risp);
 
 // Setup a callback function to be called when an unexpected command is received.
-void risp_add_invalid(RISP_PTR risp, void *callback);
+void risp_add_invalid(RISP risp, void *callback);
 
 // setup of callback commands
-void risp_add_command(RISP_PTR risp, risp_command_t command, void *callback);
+void risp_add_command(RISP risp, risp_command_t command, void *callback);
 
 // providing data that needs to be processed and sent to the callback commands.
 // Will return the number of bytes that were processed.
-risp_length_t risp_process(RISP_PTR risp, void *base, risp_length_t length, const void *data);
+risp_length_t risp_process(RISP risp, void *base, risp_length_t length, const void *data);
 
 
 // The buffer functions will assist with adding a command to a buffer that is provided.

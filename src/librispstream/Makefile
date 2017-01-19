@@ -1,9 +1,9 @@
-## make file for librisp64.
+## make file for librispstream.
 
 # Project specific variables.
-PRODUCT=risp64
+PRODUCT=rispstream
 LIBVER=1.0.0
-SOVER=2
+SOVER=1
 DESTDIR=
 WORKDIR=.
 
@@ -34,13 +34,11 @@ docker-build: docker_build
 src: $(WORKDIR)/$(LIBNAME)-src-$(LIBVER).tar.gz
 
 
-# Need to be able to make 'man-pages' as well.  Not sure where to get the source for those... 
 
 $(WORKDIR)/$(LIBNAME).o: $(SRCFILE) $(INCFILE)
 	@echo "Making: $@"
 	@-[ -d $(WORKDIR) ] || mkdir $(WORKDIR)
 	gcc -c -fPIC $(SRCFILE) -o $@ $(ARGS)
-	@ls -al $(WORKDIR)
 
 $(WORKDIR)/$(LIBNAME).a: $(WORKDIR)/$(LIBNAME).o
 	@echo "Making: $@"
@@ -49,13 +47,12 @@ $(WORKDIR)/$(LIBNAME).a: $(WORKDIR)/$(LIBNAME).o
 	@rm $@
 	ar -r $@
 	ar -r $@ $^
-	@ls -al $(WORKDIR)
 
+	
 $(WORKDIR)/$(LIBFILE): $(WORKDIR)/$(LIBNAME).o
 	@echo "Making: $@"
 	@-[ -d $(WORKDIR) ] || mkdir $(WORKDIR)
 	gcc -shared -Wl,-soname,$(SONAME) -o $@ $^
-	@ls -al $(WORKDIR)
 
 
 $(WORKDIR)/$(LIBNAME)-src-$(LIBVER).tar.gz: $(SRCFILE) $(INCFILE) Makefile
@@ -63,14 +60,12 @@ $(WORKDIR)/$(LIBNAME)-src-$(LIBVER).tar.gz: $(SRCFILE) $(INCFILE) Makefile
 	@-[ ! -d $(WORKDIR) ] && mkdir $(WORKDIR)
 	@-[ -e $@ ] && rm $@
 	tar zcf $@ $^
-	@ls -al $(WORKDIR)
 
 $(WORKDIR)/$(LIBNAME)-$(LIBVER).tar.gz: $(WORKDIR)/$(LIBFILE) $(INCFILE) $(LIBNAME).o
 	@echo "Making: $@"
 	@-[ ! -d $(WORKDIR) ] && mkdir $(WORKDIR)
 	@-[ -e $@ ] && rm $@
 	tar zcf $@ $^
-	@ls -al $(WORKDIR)
 
 
 docker_build: $(SRCFILE) $(INCFILE)
@@ -87,20 +82,22 @@ install: $(WORKDIR)/$(LIBFILE)
 	cp $(WORKDIR)/$(LIBFILE) $(LIBDIR)/
 	@-test -e $(LIBDIR)/$(MAINFILE) && rm $(LIBDIR)/$(MAINFILE)
 	ln -s $(LIBDIR)/$(LIBFILE) $(LIBDIR)/$(MAINFILE)
+	ldconfig
 
-	
 
-install_dev: $(INCFILE) man-pages
+
+install_dev: $(INCFILE)
+	echo "Copying $(INCFILE) to $(INCDIR)/"
 	cp $(INCFILE) $(INCDIR)/
 
-	
-man-pages: manpages/librisp64.3 manpages/risp_addbuf.3 manpages/risp_addbuf_noparam.3 manpages/risp_add_command.3 manpages/risp_init.3 manpages/risp_shutdown.3 manpages/risp.3 manpages/risp_addbuf_int.3 manpages/risp_addbuf_str.3 manpages/risp_add_invalid.3 manpages/risp_process.3
+
+man-pages: manpages/*
 	@mkdir tmp.install
 	@cp manpages/* tmp.install/
 	@gzip tmp.install/*.3
 	cp tmp.install/*.3.gz $(MANPATH)/man3/
 	@rm tmp.install/*
-	@rmdir tmp.install      
+	@rmdir tmp.install
 	@echo "Man-pages Install complete."
 
 
