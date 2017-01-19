@@ -14,10 +14,10 @@ docker/librisp.so.4.0.0: ../../librisp/librisp.so.4.0.0
 	cp $^ $@
 
 risp_chat_server: risp_chat_server.c risp_chat_prot.h
-	gcc -o $@ risp_chat_server.c $(ARGS) -levent -lrisp $(DEBUG_LIBS)
+	gcc -o $@ risp_chat_server.c $(ARGS) -lrispstream -levent -lrisp $(DEBUG_LIBS)
 
 risp_chat_stream: risp_chat_stream.c risp_chat_prot.h
-	gcc -o $@ risp_chat_stream.c $(ARGS) -lrisp $(DEBUG_LIBS)
+	gcc -o $@ risp_chat_stream.c $(ARGS) -lrispstream -levent -lrisp $(DEBUG_LIBS)
 
 risp_chat_stream2: risp_chat_stream2.c risp_chat_prot.h
 	gcc -o $@ risp_chat_stream2.c $(ARGS) -lrisp $(DEBUG_LIBS)

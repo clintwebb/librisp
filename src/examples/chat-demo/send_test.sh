@@ -2,7 +2,7 @@
 
 # Send lots of messages to the server.
 
-CYCLES=100
+CYCLES=1000
 
 while [ $CYCLES -gt 0 ]; do
 
