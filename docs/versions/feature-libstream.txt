@@ -1,0 +1,3 @@
+We have the base library in a complete and stable state.  So now we want to write a library that will do all the socket all the socket handling.
+
+Essentially, when people want to write a server that uses RISP protocol, they simply write all teh functions that handle the RISP Command ID's and add them to the instance, then tell create a rispstream object and tell it what interface and port to listen on, and it will do the rest.  it will deal with buffering of data, processing, etc.
