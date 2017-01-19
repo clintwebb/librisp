@@ -62,7 +62,7 @@ typedef struct {
 //--------------------------------------------------------------------------------------------------
 // Initialise everything we need to initialise.   This will return a pointer to a risp_t structure 
 // that has been allocated and initialised.  
-RISP_PTR risp_init(void)
+RISP risp_init(void)
 {
 	risp_t *r;
 
@@ -101,7 +101,7 @@ RISP_PTR risp_init(void)
 
 //--------------------------------------------------------------------------------------------------
 // Clean up the structure that were created by the library.  
-void risp_shutdown(RISP_PTR r)
+void risp_shutdown(RISP r)
 {
 	// if a NULL was passed in, then the developer has probably made a mistake.
 	assert(r != NULL);
@@ -131,7 +131,7 @@ void risp_shutdown(RISP_PTR r)
 // they should be ignored, but might want to log it or suggest and update, etc.
 // 
 // Passing in a NULL callback essentially disables it.
-void risp_add_invalid(RISP_PTR r, void *callback)
+void risp_add_invalid(RISP r, void *callback)
 {
 	assert(r);
 	
@@ -151,7 +151,7 @@ void risp_add_invalid(RISP_PTR r, void *callback)
 // pointers, risp does not know definitively that the function specified 
 // expects the correct parameters.  If the callback function is not the correct 
 // type for the command-style, then it will generally end up with a segfault.
-void risp_add_command(RISP_PTR r, risp_command_t command, void *callback) 
+void risp_add_command(RISP r, risp_command_t command, void *callback) 
 {
 // 	printf("add_cmd: command:%u, max:%lu\n", command, RISP_MAX_USER_CMD);
 	
@@ -243,7 +243,7 @@ static void log_data(char *tag, unsigned char *data, int length)
 // Process all the commands in the data buffer, returning the number of bytes processed.  If we dont 
 // have enough data to complete the operation, then the calling function can then figure out what to 
 // do with it.
-risp_length_t risp_process(RISP_PTR r, void *base, risp_length_t len, const void *data)
+risp_length_t risp_process(RISP r, void *base, risp_length_t len, const void *data)
 {
 	risp_length_t processed = 0;
 	
