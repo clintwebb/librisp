@@ -1,0 +1,5 @@
+This feature introduces the ability to use secure streams (SSL/TLS).
+
+Pre-requisit:
+ * feature-bufferevents
+

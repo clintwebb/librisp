@@ -1,2 +1,0 @@
-This feature introduces the ability to use secure streams (SSL/TLS) and also to utilise libevent buffers.
-
