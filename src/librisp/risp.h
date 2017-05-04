@@ -114,5 +114,10 @@ risp_length_t risp_addbuf_str(void *buffer, risp_command_t command, risp_length_
 // function will tell you how many bytes the command will use.
 risp_length_t risp_command_length(risp_command_t command, risp_length_t length);
 
+// Peek in the data buffer to determine how much data we need.   This command will tell you how many 
+// bytes it needs for the next (and only the next) complete command in the buffer.  Note that it may 
+// not have all the data it needs, so it may return how much data it needs to get to the next step.
+risp_length_t risp_needs(risp_length_t len, const void *data);
+
 
 #endif

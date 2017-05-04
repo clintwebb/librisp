@@ -420,7 +420,6 @@ risp_length_t risp_needs(risp_length_t len, const void *data)
 	// we also do some bit manipulation of the command, and assume that it is 2 bytes only.
 	assert(sizeof(risp_command_t) == 2);
 	
-	
 	const unsigned char *ptr = (char *) data;
 	
 	assert(data != NULL);
