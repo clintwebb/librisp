@@ -406,6 +406,101 @@ risp_length_t risp_process(RISP r, void *base, risp_length_t len, const void *da
 }
 
 
+//--------------------------------------------------------------------------------------------------
+// Peek in the data buffer to determine how much data we need.   This command will tell you how many 
+// bytes it needs for the next (and only the next) complete command in the buffer.  Note that it may 
+// not have all the data it needs, so it may return how much data it needs to get to the next step.
+risp_length_t risp_needs(risp_length_t len, const void *data)
+{
+	risp_length_t needs = 0;
+	
+	// risp_int_t should be 64-bit long.
+	assert(sizeof(risp_int_t) == 8);
+	
+	// we also do some bit manipulation of the command, and assume that it is 2 bytes only.
+	assert(sizeof(risp_command_t) == 2);
+	
+	
+	const unsigned char *ptr = (char *) data;
+	
+	assert(data != NULL);
+	assert(len >= 0);
+	
+	if (len <= sizeof(risp_command_t)) {
+		needs = sizeof(risp_command_t);
+	}
+	else {
+		
+		// Each command in the protocol is made up of two parts, the style bitmap, and the 
+		// command id.  Together they make up a command in the protocol, but since we will be 
+		// seperating them anyway, we might as well pull them out together.
+
+		risp_command_t cmd = ptr[0];	// add the first byte
+		cmd <<= 8;	// shift it into position.
+		cmd |= ptr[1];
+		
+		ptr += 2;
+
+		// There are certain ranges that are specifically set aside for commands that have no parameters.
+		// These are: 
+		// 		No Parameters - 0x7000 to 0x7fff          0 111 xxxx xxxx
+		// 		No Parameters - 0xc000 to 0xffff          1 1xx xxxx xxxx
+		// We can therefore check for specific bits in the style.
+
+		// Note that 0x7 and 0xC overlap, but thats ok, because the overlap is still within either range.
+		if ((cmd >= 0x7000 && cmd <= 0x7fff) || (cmd >= 0xc000)) {
+			needs = sizeof(risp_command_t);
+		}
+		else {
+		
+			// make sure we haven't made a mistake determining the non-param ranges.
+			assert((cmd < 0x7000 || cmd > 0x7fff) && cmd < 0xc000);
+
+			// Since the command was not within the no-param range, then we need to parse the integer size.
+			short int_bits = (cmd & 0x7000) >> 12;
+			short int_len = 1 << int_bits;
+
+			// We now know how many bytes are needed for the integer.
+			needs = (sizeof(risp_command_t) + int_len;
+
+			// this code only handles values up to risp_int_t size.
+			assert(int_len <= sizeof(risp_int_t));
+			// TODO: trim the int_len so that it will fit..
+			
+			// Now we need to check if this command has a string that follows or not.  If not, then 
+			// we already know all we need.  If it is a string, we will need to get the integer value, 
+			// because that will tell us how long the string is.
+
+			if ((cmd & 0x8000) != 0) {
+			
+				// we know how big the integer is, we need to actually get it.
+				risp_int_t intvalue = 0;
+				register short counter;
+				for (counter=0; counter < int_len; counter++) {
+					
+					// shift the value to the left.
+					// not necessary for the first iteration, but it is cheaper than checking for it.
+					intvalue <<= 8;
+					
+					intvalue |= *ptr;
+					ptr ++;
+				}
+						
+				// this command is a string.
+				needs = sizeof(risp_command_t) + int_len + intvalue;
+			}
+		}
+	}
+
+	assert(needs >= sizeof(risp_command_t));
+	
+	// return the number of bytes needed to process the next command (including what we already have);
+	return(needs);
+}
+
+
+
+
 
 // to assist with knowing how much space a command will need to be reserved for a buffer, this 
 // function will tell you how many bytes the command will use.
