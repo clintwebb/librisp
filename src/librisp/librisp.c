@@ -474,16 +474,17 @@ risp_length_t risp_needs(risp_length_t len, const void *data)
 			// We now know how many bytes are needed for the integer.
 			needs = sizeof(risp_command_t) + int_len;
 
-			// this code only handles values up to risp_int_t size.
-			assert(int_len <= sizeof(risp_int_t));
-			// TODO: trim the int_len so that it will fit..
-			
 			// Now we need to check if this command has a string that follows or not.  If not, then 
 			// we already know all we need.  If it is a string, we will need to get the integer value, 
 			// because that will tell us how long the string is.
 
 			if ((cmd & 0x8000) != 0) {
-			
+				// this command is a string.
+
+				// this code only handles values up to risp_int_t size.
+				assert(int_len <= sizeof(risp_int_t));
+				// TODO: trim the int_len so that it will fit..
+								
 				// we know how big the integer is, we need to actually get it.
 				risp_int_t intvalue = 0;
 				register short counter;
@@ -497,7 +498,6 @@ risp_length_t risp_needs(risp_length_t len, const void *data)
 					ptr ++;
 				}
 						
-				// this command is a string.
 				needs = sizeof(risp_command_t) + int_len + intvalue;
 			}
 		}
