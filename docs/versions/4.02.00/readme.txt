@@ -6,4 +6,7 @@ Includes:
  feature-version - risp_version() to ensure that we have a recent enough library installed on the system.
  feature-bufferevents - the main crux of this release.
 
+History:
+ 2017.05.05 - Merged in 'feature-version' because development of 'feature-bufferevents' requires it.
+ 
 

@@ -93,6 +93,9 @@ typedef void * RISP;
 RISP risp_init(void);
 void risp_shutdown(RISP risp);
 
+// Return the library version number (run-time rather than compile-time)
+long long risp_version(void);
+
 // Setup a callback function to be called when an unexpected command is received.
 void risp_add_invalid(RISP risp, void *callback);
 

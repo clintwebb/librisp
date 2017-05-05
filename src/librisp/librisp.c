@@ -60,6 +60,18 @@ typedef struct {
 
 
 //--------------------------------------------------------------------------------------------------
+// Return the library version number (run-time rather than compile-time).  When ensuring that the 
+// right library version is installed, need to use this function rather than the version in the 
+// library header.  This is because the header only gives the version of the library that this was 
+// compiled on, not what it is running on.
+long long risp_version(void)
+{
+	return(RISP_VERSION);
+}
+
+
+
+//--------------------------------------------------------------------------------------------------
 // Initialise everything we need to initialise.   This will return a pointer to a risp_t structure 
 // that has been allocated and initialised.  
 RISP risp_init(void)
