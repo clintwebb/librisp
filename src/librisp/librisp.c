@@ -472,7 +472,7 @@ risp_length_t risp_needs(risp_length_t len, const void *data)
 			short int_len = 1 << int_bits;
 
 			// We now know how many bytes are needed for the integer.
-			needs = (sizeof(risp_command_t) + int_len;
+			needs = sizeof(risp_command_t) + int_len;
 
 			// this code only handles values up to risp_int_t size.
 			assert(int_len <= sizeof(risp_int_t));
