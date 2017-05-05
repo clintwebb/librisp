@@ -62,8 +62,8 @@
 #include <stdint.h>
 
 
-#define RISP_VERSION 0x00040000
-#define RISP_VERSION_NAME "v4.00.00"
+#define RISP_VERSION 0x00040200
+#define RISP_VERSION_NAME "v4.02.00"
 
 // the RISP commands are 16-bit integers.
 #define RISP_MAX_USER_CMD    (0xffff)
