@@ -28,13 +28,13 @@
 
 #include <stdio.h>
 
-#if (RISP_VERSION != 0x00040000)
+#if (RISP_VERSION != 0x00040200)
 #error "Incorrect header version.  code and header versions must match."
 #endif
 
 // A Random number that is applied to every risp_t structure to verify that the pointer is actually pointing to an initiated object.
 // NOTE: This identifier should change when functional changes are made to the structure.
-#define RISP_STRUCT_VERIFIER 635706134
+#define RISP_STRUCT_VERIFIER 648564785
 
 
 typedef struct {
