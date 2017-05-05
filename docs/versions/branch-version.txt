@@ -1,0 +1,6 @@
+Adds a function, risp_version(), that returns the library version number (run-time rather than compile-time).  
+
+When ensuring that the right library version is installed, need to use this function rather than the version in the library header.  
+
+This is because the header only gives the version of the library that this was compiled on, not what it is running on.
+
