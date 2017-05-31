@@ -818,7 +818,9 @@ void newconn_cb(RISPSESSION streamsession, void *dataptr)
 	assert(dataptr);
 	maindata_t *maindata = dataptr;
 	assert(maindata);
-		
+
+	fprintf(stderr, "Newconn\n");
+	
 	// this will create the session and manage it however we need to manage it.
 	session_t *session = session_new(maindata, streamsession);
 	assert(session);
@@ -893,6 +895,7 @@ maindata_t * maindata_init(void)
 int main(int argc, char **argv) 
 {
 	char *interface = "0.0.0.0";
+	char *secchain = NULL;
 	int port = DEFAULT_PORT;
 	bool verbose = false;
 
@@ -904,11 +907,13 @@ int main(int argc, char **argv)
 	while ((c = getopt(argc, argv, 
 		"l:" /* listening interface (IP) */
 		"p:" /* port to listen on */
+		"s:" /* secure connection. Parameter is PEM file containing certificate chain to verify connections against */
 		"h"  /* help... show usage info */
 		"v"  /* verbosity */
 	)) != -1) {
 		switch (c) {
 			case 'p':
+				assert(optarg);
 				port = atoi(optarg);
 				assert(port > 0);
 				break;
@@ -920,6 +925,11 @@ int main(int argc, char **argv)
 				break;
 			case 'l':
 				interface = optarg;
+				assert(interface);
+				break;
+			case 's':
+				secchain = optarg;
+				assert(secchain);
 				break;
 				
 			default:
