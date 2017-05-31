@@ -520,22 +520,44 @@ risp_length_t risp_command_length(risp_command_t command, risp_length_t dataLeng
 	risp_length_t length = 0;
 
 	assert(dataLength >= 0);
+// 	fprintf(stderr, "risp_command_length: command=%X\n", command);
 
-	// the style part of the command is the highest 4-bits.
-	unsigned char style = (command >> (16-4));
-	
 	// start with the size of the command id.
 	length = sizeof(risp_command_t);
+	assert(length == 2);
+// 	fprintf(stderr, "risp_command_length: length=%d\n", length);
+
 	
-	// the lowest 3 bits are the length (2 to the power of) of the integer part.
-	unsigned char int_bits = (style & 0x7);
-	assert(int_bits < 8);
-	unsigned char int_len = 1 << int_bits;
-	length += int_len;
+	if ((command >= 0x7000 && command <= 0x7fff) || (command >= 0xc000)) {
+		// command specifically has no parameters.
+// 		fprintf(stderr, "risp_command_length: no parameters\n");
+		
+		assert(length == 2);
+		assert(dataLength <= 0);
+	}
+	else {
 	
-	// if there was an integer part, AND it is also a string, then we need to add the dataLength part. 
-	if (int_len > 0 && (style & 0x8)) {
-		length += dataLength;
+		// the style part of the command is the highest 4-bits.
+		unsigned char style = (command >> (16-4));
+// 		fprintf(stderr, "risp_command_length: style=%X\n", style);
+		
+		
+		// the lowest 3 bits are the length (2 to the power of) of the integer part.
+		unsigned char int_bits = (style & 0x7);
+		assert(int_bits < 8);
+		unsigned char int_len = 1 << int_bits;
+		length += int_len;
+// 		fprintf(stderr, "risp_command_length: int_bits=%X\n", int_bits);
+// 		fprintf(stderr, "risp_command_length: int_len=%d\n", int_len);
+// 		fprintf(stderr, "risp_command_length: length=%d\n", length);
+		
+		// if there was an integer part, AND it is also a string, then we need to add the dataLength part. 
+		if (int_len > 0 && (style & 0x8)) {
+// 			fprintf(stderr, "risp_command_length: is a string:%d\n", dataLength);
+
+			length += dataLength;
+		}
+// 		fprintf(stderr, "risp_command_length: length=%d\n", length);		
 	}
 	
 	assert(length >= sizeof(risp_command_t));
