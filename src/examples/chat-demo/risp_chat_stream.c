@@ -198,7 +198,7 @@ void connect_cb(RISPSESSION session, void *basedata)
 //--------------------------------------------------------------------------------------------------
 // Callback routine for when a session either fails to connect, or has been closed.
 //
-// Ssince we fully expect that we could get a failed connect when first connecting, it is possible 
+// Since we fully expect that we could get a failed connect when first connecting, it is possible 
 // that the session is NULL.  However, if the session is closed after the connection is established, 
 // we should have a session.   Therefore, if we had a session established, then this should be 
 // closing that.  If not, then this sesion is closing, and since it should be the only session we 
@@ -302,10 +302,7 @@ int main(int argc, char **argv)
 	// the connection until the stream is being processed (rispstream_process).
 	assert(srv);
 	assert(port > 0);
-	char *connstr = malloc(4096);
-	sprintf(connstr, "%s:%d", srv, port);
-	rispstream_connect(data.stream, connstr, &data, connect_cb, close_cb);
-	free(connstr); connstr = NULL;
+	rispstream_connect(data.stream, srv, port, &data, connect_cb, close_cb);
 
 	// this function will process the stream (assuming the connection succeeds).  
 	// When there are no more events, it will exit.
