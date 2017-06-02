@@ -62,8 +62,8 @@
 #include <stdint.h>
 
 
-#define RISP_VERSION 0x00040000
-#define RISP_VERSION_NAME "v4.00.00"
+#define RISP_VERSION 0x00040200
+#define RISP_VERSION_NAME "v4.02.00"
 
 // the RISP commands are 16-bit integers.
 #define RISP_MAX_USER_CMD    (0xffff)
@@ -93,6 +93,9 @@ typedef void * RISP;
 RISP risp_init(void);
 void risp_shutdown(RISP risp);
 
+// Return the library version number (run-time rather than compile-time)
+long long risp_version(void);
+
 // Setup a callback function to be called when an unexpected command is received.
 void risp_add_invalid(RISP risp, void *callback);
 
@@ -113,6 +116,11 @@ risp_length_t risp_addbuf_str(void *buffer, risp_command_t command, risp_length_
 // to assist with knowing how much space a command will need to be reserved for a buffer, this
 // function will tell you how many bytes the command will use.
 risp_length_t risp_command_length(risp_command_t command, risp_length_t length);
+
+// Peek in the data buffer to determine how much data we need.   This command will tell you how many 
+// bytes it needs for the next (and only the next) complete command in the buffer.  Note that it may 
+// not have all the data it needs, so it may return how much data it needs to get to the next step.
+risp_length_t risp_needs(risp_length_t len, const void *data);
 
 
 #endif

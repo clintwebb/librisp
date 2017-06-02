@@ -90,7 +90,7 @@ install_dev: $(INCFILE) man-pages
 	cp $(INCFILE) $(INCDIR)/
 
 
-man-pages: manpages/librisp.3 manpages/risp_addbuf.3 manpages/risp_addbuf_noparam.3 manpages/risp_add_command.3 manpages/risp_init.3 manpages/risp_shutdown.3 manpages/risp.3 manpages/risp_addbuf_int.3 manpages/risp_addbuf_str.3 manpages/risp_add_invalid.3 manpages/risp_process.3
+man-pages: manpages/librisp.3 manpages/risp_addbuf.3 manpages/risp_addbuf_noparam.3 manpages/risp_add_command.3 manpages/risp_init.3 manpages/risp_shutdown.3 manpages/risp.3 manpages/risp_addbuf_int.3 manpages/risp_addbuf_str.3 manpages/risp_add_invalid.3 manpages/risp_process.3 manpages/risp_needs.3
 	@mkdir tmp.install
 	@cp manpages/* tmp.install/
 	@gzip tmp.install/*.3

@@ -24,6 +24,8 @@
 #include <ctype.h>
 #include <errno.h>
 #include <event.h>
+#include <event2/bufferevent.h>
+#include <event2/dns.h>
 #include <event2/listener.h>
 #include <fcntl.h>
 #include <risp.h>
@@ -38,16 +40,12 @@
 
 // global constants and other things go here.
 #define DEFAULT_MAXCONNS	1024
-#define DEFAULT_MAXBYTES	0
 #define DEFAULT_CHUNKSIZE	(1024*512)
 
 // the number of slots to add to our sessions array every time we need to expand it.  Initial array size will be this size.
 #define SESSION_SLOT_INCR 4
 
 #define INVALID_HANDLE -1
-
-// if our buffer gets bigger than this, then we should attempt to shrink it.
-#define OPTIMAL_MAX (DEFAULT_CHUNKSIZE*64)
 
 #define STRUCT_VERIFIER 92749473038
 
@@ -68,16 +66,11 @@ typedef struct {
 	// NOTE that it will change independantly of this session.
 	int index;
 
-	struct {
-		unsigned char *buffer;
-		unsigned int length;
-		unsigned int max;
-		struct event *event;
-	} in, out;
+	struct bufferevent *bev;
+	long long buffwait;
 	
 	int closing;
 	struct event *close_event;
-	struct event *connect_event;
 
 	risp_cb_newconn newconn_fn;
 	risp_cb_connclosed connclosed_fn;
@@ -105,7 +98,6 @@ typedef struct {
 	struct evconnlistener *listener;
 	struct event *stream_cleanup_event;
 	struct event *break_event;
-//	int listen_handle;
 	
 	// The sessions are maintained in an array.  
 	// This will be maintained from the stream side of things, rather than the sessions themselves.  
@@ -125,11 +117,6 @@ typedef struct {
 
 
 struct timeval auth_timeout = {10,0};		// timeout if new socket hasn't authenticated.
-
-
-//--------------------------------------------------------------------------------------------------
-// Pre-declared functions.  
-static void session_write_handler(int hid, short flags, void *data);
 
 
 
@@ -158,10 +145,18 @@ RISPSTREAM rispstream_init(struct event_base *base)
 	stream_t *stream = calloc(1, sizeof(stream_t));
 	assert(stream);
 
+	// This library requires features from librisp v4.02.00 or higher, namely risp_needs().
+	if (risp_version() < 0x00040200) {
+		// Version v4.02.00 is required.
+		fprintf(stderr, "librisp version 4.02.00 or greater is required for librispstream.\n");
+		return(NULL);
+	}
+	
 	// This value is used to determine if a correct STREAM pointer is provided as an argument.
 	stream->sverify = STRUCT_VERIFIER;
 
 	if (base == NULL) {
+		// No libevent was provided, therefore we must initiate our own.
 		stream->main_event_base = event_base_new();
 		assert(stream->main_event_base);
 		
@@ -172,8 +167,12 @@ RISPSTREAM rispstream_init(struct event_base *base)
 		stream->main_event_base = base;
 		stream->flag_internal_event_base = 0;
 	}
-	
-	stream->dns_base = NULL;
+
+	// setup the event DNS resolver, so that it can resolve DNS requests without blocking.
+	assert(stream->main_event_base);
+	stream->dns_base = evdns_base_new(stream->main_event_base, 1);
+	assert(stream->dns_base);
+
 	stream->idle_callback_fn = NULL;
 	stream->break_callback_fn = NULL;
 	stream->newconn_callback_fn = NULL;
@@ -230,12 +229,11 @@ void rispstream_init_events(RISPSTREAM streamptr)
 			assert(0);
 			
 		}
-		
-	}	
+	}
 }
 
 
-// When a session is closed (normally from the other side), we need to do some cleanup.
+// When the underlying transport is closed (normally from the other side), we need to do some cleanup.
 static void session_close(session_t *session) 
 {
 	assert(session);
@@ -245,38 +243,16 @@ static void session_close(session_t *session)
 		event_del(session->close_event);
 		session->close_event = NULL;
 	}
-	
-	// delete the 'out' event and buffer.  We dont care if there is something in it.
-	assert(session->out.event);
-	event_del(session->out.event);
-	session->out.event = NULL;
-	
-	if (session->out.buffer) {
-		assert(session->out.max > 0);
-		free(session->out.buffer); 
-		session->out.buffer = NULL;
+
+	assert(session->bev);
+	bufferevent_free(session->bev);
+	session->bev = NULL;
+
+	if (session->handle >= 0) {
+		close(session->handle);
+		session->handle = INVALID_HANDLE;
 	}
-
-	session->out.length = 0;
-	session->out.max = 0;
-
-	// delete the 'in' event and buffer.  Again we dont care if there is something in it, because it would only have been a partial message.
-	assert(session->in.event);
-	event_del(session->in.event);
-	session->in.event = NULL;
 	
-	if (session->in.buffer) {
-		assert(session->in.max > 0);
-		free(session->in.buffer);
-		session->in.buffer = NULL;
-	}
-	session->in.length = 0;
-	session->in.max = 0;
-	
-	assert(session->handle >= 0);
-	close(session->handle);
-	session->handle = INVALID_HANDLE;
-
 	assert(session->stream);
 	stream_t *stream = session->stream;
 
@@ -321,183 +297,139 @@ static void session_close(session_t *session)
 }
 
 //--------------------------------------------------------------------------------------------------
-// This function is called when we have received a data over a socket we have accepted a connection 
-// for.  We read the data from the socket and then process it.
-static void session_read_handler(int hid, short flags, void *data)
+// This function is called when we have received enough data in our buffer to attempt to process it.  
+// At a minimum we need 2 bytes.  From those two bytes, we can then determine how much more data we 
+// need for the command.  Note that it is possible and likely to receive multiple commands at a time.
+static void session_read_handler(struct bufferevent *bev, void *data)
 {
-	assert(hid >= 0);
-	
 	session_t *session = data;
 	assert(session != NULL);
-	
-// 	fprintf(stderr, "session_read_handler. hid=%d, handle=%d\n", hid, session->handle);
-	
-	// If the handle is invalid, then we shouldn't be processing anything more on this socket.  
-	assert(session->handle == hid);
-	
-	// when the socket is closed, the read-event should have been cleared.
-	assert(session->closing == 0);
-	
-	if (flags & EV_TIMEOUT) {
-		// if the timeout occured, then the READ flag should not be set.
-		assert((flags & EV_READ) == 0);
-	}
-	
-	if (flags & EV_READ) {
 
-		// make sure we have some available space in our buffer.  We want to at least be able to get a 'CHUNK' worth.
-		unsigned int avail = session->in.max - session->in.length;
-		if (avail < DEFAULT_CHUNKSIZE) {
-			session->in.max += DEFAULT_CHUNKSIZE;
-			session->in.buffer = (unsigned char *) realloc(session->in.buffer, session->in.max);
-			avail = session->in.max - session->in.length;
-		}
-
-		assert(session->in.buffer);
-		assert(session->in.length >= 0);
-		assert(avail >= DEFAULT_CHUNKSIZE);
-		ssize_t res = recv(hid, session->in.buffer + session->in.length, avail, O_NONBLOCK);
-		if (res > 0) {
-			session->in.length += res;
-			assert(session->in.length <= session->in.max);
-		}
-		else if (res == 0) {
-			// Session closed while reading.
-			session_close(session);
-		}
-		else {
-			assert(res == -1);
-			if (errno != EAGAIN && errno != EWOULDBLOCK) {
-				session_close(session);
-			}
-		}
-		
-		if ((session->closing == 0) && (session->in.length > 0)) {
-			
-			assert(session->in.length <= session->in.max);
-			assert(session->in.length > 0);
-			
-			stream_t *stream = session->stream;
-			assert(stream);
-			assert(stream->risp);
-			risp_length_t processed = risp_process(stream->risp, session->usersession, session->in.length, session->in.buffer);
-			assert(processed <= session->in.length);
-			assert(processed >= 0);
-			if (processed < session->in.length) {
-				// we didn't process all the data in the buffer.  This means we haven't received it 
-				// all yet.  Move the un-processed data to the start of the buffer, and wait for the 
-				// rest to arrive (if we processed anything at all).
-				if (processed > 0) {
-					avail = session->in.length - processed;
-					memmove(session->in.buffer, session->in.buffer + processed, avail);
-					session->in.length -= processed;
-					assert(session->in.length > 0);
-				}
-			}
-			else {
-				// everything in the buffer was processed.  So we can mark it as empty.
-				session->in.length = 0;
-			}
-		}
-
-		if (session->closing != 0) {
-			// need to close the connection now that all the output has been sent.
-			session_close(session);
-		}
-	}
+	fprintf(stderr, "Data received.\n");
 	
-	// Once our 'partial' processing has passed a certain point, we want to clean up the memory that 
-	// we have allocated.  This is also to combat situations where people are sending a valid data 
-	// stream but deliberately leaving an unfinished command at the end of each packet (completed at 
-	// the beginining of the next packet), which would normally end up increasing the amount of 
-	// memory used by the session.   This is intended to ensure that doesn't cause more serious 
-	// memory issues.
- 	if (session->in.max > OPTIMAL_MAX) {
-		if (session->in.length < session->in.max) {
-			session->in.buffer = (unsigned char *) realloc(session->in.buffer, session->in.length);
-			session->in.max = session->in.length;
-		}
- 	}
-}
+	assert(bev == session->bev);
 
-
-static void session_create_events(session_t *session)
-{
-	assert(session);
 	stream_t *stream = session->stream;
 	assert(stream);
+	assert(stream->risp);
 	
-	assert(stream->main_event_base);
-	assert(session->out.event == NULL);
-	assert(session->handle >= 0);
-	session->out.event = event_new(stream->main_event_base, session->handle, EV_WRITE, session_write_handler, (void *)session);
-	assert(session->out.event);
+	// if we are reading data, the session should NOT be closing.
+	assert(session->closing == 0);
 
-	// Since we will always be ready to receive data, we should create the read event, making it persistant.   
-	// If there is an idle callback, then we set it with a timeout.
-	assert(stream->main_event_base);
-	assert(session->in.event == NULL);
-	assert(session->handle >= 0);
-	session->in.event = event_new(stream->main_event_base, session->handle, EV_TIMEOUT | EV_READ | EV_PERSIST, session_read_handler, (void *)session);
-	assert(session->in.event);
+	// if buffwait is -1, it means it wasn't configured when the session was created.
+	assert(session->buffwait != -1);
+	
+	// at this point, the amount of data we are waiting on should be at least 2 or greater.  
+	// This is because the minimum command size is 2 bytes.  Once we know those 2 bytes, 
+	// we can determine what the size of the complete command should be.
+	assert(session->buffwait >= 2);
+	
+	struct evbuffer *input = bufferevent_get_input(bev);
+	assert(input);
+	
+	size_t len = evbuffer_get_length(input);
+	while (len >= session->buffwait) {
 
-	struct timeval *timeout = NULL;
-	event_add(session->in.event, timeout);
+		// The low-watermark should have allowed a trigger as soon as we have the minimum we need 
+		// (which is 2 bytes for the start of the command, or the rest that we are waiting for). 
+		
+		// NOTE: we are not pulling data out of the buffer.  We will leave the data in there, and process it directly.  
+		//       Therefore, we need to make sure the entire command is in contiguous memory.  
+		//       There may be more than one command in the first chunk of data though.
+		
+		// NOTE: In many circumstances, it might be more efficient to just pullup the entire buffer, so that much more can be processed in a single loop.  However, the danger is that we receive a large amount of data, and pulling it all together in one go could be too much.  Therefore, it may be better to have some logic around it, pull-up a certain amount each time.  Some performance testing of various situations should be undertaken.
+		
+		unsigned char *inbuffer = evbuffer_pullup(input, session->buffwait);
+		assert(inbuffer);
+		
+		// now that we have at least the data that we need to start with, we should try and process as much as we can 
+		// (if we dont have the full amount of data, it doesn't matter, we will detect that and prepare for the next iteration.)
+		// Note also, we dont process the minimum (buffwait), because we might actually have much more than that in our buffer, 
+		// and we want to process as much as we can.
+		size_t avail = evbuffer_get_contiguous_space(input);
+		assert(avail <= len);
+		
+		// process the data that we have.
+		risp_length_t processed = risp_process(stream->risp, session->usersession, avail, inbuffer);
+		assert(processed <= avail);
+		assert(processed >= 0);
+		
+		// if we processed data from the buffer, we should remove at least that part now.
+		if (processed > 0) {
+			evbuffer_drain(input, processed);
+			avail -= processed;
+
+			// inbuffer is probably invalid now.
+			inbuffer = NULL;
+			
+			// what we have processed, need to decrement.
+			len -= processed;
+			assert(len >= 0);
+		}
+		
+		if (avail >= 2) {
+			// there is a command still in the local buffer, we need to find out how much data it needs, and set the watermark to that.
+			
+			if (inbuffer == NULL) {
+				// pullup at least the 2 bytes required in a command.
+				inbuffer = evbuffer_pullup(input, sizeof(risp_command_t));
+				assert(inbuffer);
+				
+				avail = evbuffer_get_contiguous_space(input);
+			}
+			
+			// find out how much data we need (based on the info we have already).
+			session->buffwait = risp_needs(avail, inbuffer);
+		}
+		else {
+			session->buffwait = 2;
+		}
+		
+	}
+	
+	// set the watermark.
+	assert(session->buffwait >= 2);
+	bufferevent_setwatermark(bev, EV_READ, session->buffwait, 0);
 }
 
 
-
-static void session_connect_handler(int fd, short int flags, void *arg)
+// If a session is connected, then we call the callback handler if one was set and then process as normal.  
+// If the connection fails, we call the 'closed' callback if one was specified, and clean up the connection.  
+// Once connected, if the connection is closed, cleanup and call callback handler.
+void session_buffer_handler(struct bufferevent *bev, short events, void *ptr)
 {
-	session_t *session = arg;
+	session_t *session = ptr;
+	assert(session);
+	assert(bev);
+	assert(events != 0);
 
-	assert(fd >= 0);
-	assert(flags != 0);
-	assert(flags & EV_WRITE);
-
-// 	fprintf(stderr, "connect_handler: fd=%d, handle=%d, sessionptr=%llx\n", fd, session->handle, (long long unsigned) session);
-	
-	// at this point, we expect the session handle to be -1.  Since we are now connected, we will want to set the proper handle.
-	assert(session->handle == -1);
-	session->handle = fd;
-
-	// remove the connect handler
-	assert(session->connect_event);
-	event_free(session->connect_event);
-	session->connect_event = NULL;
-	
-	// since we connected, the regular read and write events shouldn't have been set yet.
-	assert(session->out.event == NULL);
-	assert(session->in.event == NULL);
-	session_create_events(session);
-	assert(session->out.event);
-	assert(session->in.event);
-	
-	int error;
-	socklen_t foo = sizeof(error);
-	getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &foo);
-	if (error == ECONNREFUSED) {
-		// connect failed...  
-// 		fprintf(stderr, "CONNECT FAILED\n");
-		if (session->connclosed_fn) {
-			(*session->connclosed_fn)(session, session->usersession);
-			session_close(session);
+    if (events & BEV_EVENT_CONNECTED) {
+		// we have successfully connected.
+		assert(session->bev == NULL || session->bev == bev);
+		if (session->bev == NULL) { 
+			session->bev == bev; 
+			
+			// Need to set the watermark for the minimum data needed (2 bytes).  
+			// Once 2 bytes have been read, we will know how much more data we need for the command, so we can then set a new watermark.
+			session->buffwait = 2;
+			bufferevent_setwatermark(session->bev, EV_READ, session->buffwait, 0);
 		}
-	}
-	else {
-		// session connected.
-// 		fprintf(stderr, "CONNECTED\n");
-
-		// since the connection was successful, we want to set the read-event to active.
-		assert(session->in.event);
-		event_add(session->in.event, NULL);
-
+		fprintf(stderr, "Connection received.\n");
 		if (session->newconn_fn) {
 			// a callback was specified so we call it.
 			(*session->newconn_fn)(session, session->usersession);
 		}
-	}
+    } 
+    else if (events & (BEV_EVENT_ERROR|BEV_EVENT_EOF)) {
+		assert(session->bev == bev);
+		if (session->connclosed_fn) {
+			(*session->connclosed_fn)(session, session->usersession);
+			assert(session->handle >= 0);
+			session_close(session);
+		}
+    }
 }
+
 
 
 
@@ -508,7 +440,7 @@ static void session_connect_handler(int fd, short int flags, void *arg)
 //--------------------------------------------------------------------------------------------------
 // allocate space off the heap for a new struct.  clear and initialise it with the new handle.  
 // If handle is <0 , then the socket is not yet connected, and therefore don't enable the read 
-// handler.  Since we are not supplying the handle yet, we also cannot setup the write handler.
+// handler.  If we are not supplying the handle yet, we also cannot setup the write handler.
 static session_t * session_new(stream_t *stream, int handle)
 {
 	assert(stream);
@@ -518,34 +450,39 @@ static session_t * session_new(stream_t *stream, int handle)
 	assert(session);
 	
 	session->stream = stream;
-
-	session->in.buffer = NULL;
-	session->in.length = 0;
-	session->in.max = 0;
-	session->out.buffer = NULL;
-	session->out.length = 0;
-	session->out.max = 0;
-	
 	session->handle = handle;
-	
 	session->closing = 0;
 	session->close_event = NULL;
-	
-	session->connect_event = NULL;
-	
 	session->newconn_fn = NULL;
 	session->connclosed_fn = NULL;
+	session->bev = NULL;
+	session->buffwait = 2;
 	
 	// pre-create the events that we will be using for this socket. 
 	// only add the read event if a valid handle has been supplied.  If we are initiating a connection, then we dont want the read handler added first.
 	if (session->handle >= 0) {
-		session_create_events(session);
-		assert(session->out.event);
-		assert(session->in.event);
+
+		// we have a socket handle, now we need to create the evbuffer, and it will handle the socket from now on.
+		assert(stream->main_event_base);
+		assert(session->handle >= 0);
+		session->bev = bufferevent_socket_new(stream->main_event_base, session->handle, BEV_OPT_CLOSE_ON_FREE);
+		assert(session->bev);
+
+		// Need to set the watermark for the minimum data needed (2 bytes).  
+		// Once 2 bytes have been read, we will know how much more data we need for the command, so we can then set a new watermark.
+		assert(session->buffwait >= 2);
+		bufferevent_setwatermark(session->bev, EV_READ, session->buffwait, 0);
+
+		// Need to set the callback routine when new data arrives.
+		fprintf(stderr, "Read handler set.\n");
+		bufferevent_setcb(session->bev, session_read_handler, NULL, session_buffer_handler, session);
+		bufferevent_enable(session->bev, EV_READ|EV_WRITE);
+		
+		// TODO: If there is an idle callback, then we set it with a timeout.
 	}
 	else {
-		assert(session->out.event == NULL);
-		assert(session->in.event == NULL);
+		assert(session->bev == NULL);
+// 		assert(0);
 	}
 	
 	if (stream->idle_callback_fn) {
@@ -583,7 +520,6 @@ static session_t * session_new(stream_t *stream, int handle)
 		}
 	}
 
-
 	assert(stream->next_session_slot < stream->max_sessions);
 	// at the end of this, we should have added our new session to an empty slot in the array.  
 	// If the array had no empty slots (after the next_session_slot), then it would have increased the size of the array.
@@ -612,7 +548,7 @@ void rispsession_set_userdata(RISPSESSION sessionptr, void *sessiondata)
 
 
 // This function will add a connection to the stream.  Since the connection is not established, it will try and establish it.  Since we are using events, then it will add the details to a structure.  It will then create a timeout event.  The timeout event should fire and it will attempt to connect once the event system is processing.  If the connection timesout, then it will need to call the connect-fail callback.
-int rispstream_connect(RISPSTREAM streamptr, char *host, void *basedata, risp_cb_newconn newconn_fn, risp_cb_connclosed connclosed_fn)
+int rispstream_connect(RISPSTREAM streamptr, char *host, int port, void *basedata, risp_cb_newconn newconn_fn, risp_cb_connclosed connclosed_fn)
 {
 	stream_t *stream = streamptr;
 	assert(stream);
@@ -622,145 +558,34 @@ int rispstream_connect(RISPSTREAM streamptr, char *host, void *basedata, risp_cb
 		// if there isn't already a libevent_base already set, then we should do one now.
 		if (stream->main_event_base == NULL) { rispstream_init_events(streamptr); }
 		
-		// TODO: The DNS Lookup (evutil_parse_sockaddr_port) is currently 'blocking'.  We need to use evdns instead 
-		// with callbacks so that we can do the DNS lookup without blocking any other events.
+		// create a new session (passing in -1 as a handle, so that it doesn't setup all the events)
+		session_t *session = session_new(streamptr, -1);
+		assert(session);
+		assert(session->handle == -1);
+
+		assert(session->usersession == NULL);
+		session->usersession = basedata;
+			
+		session->newconn_fn = newconn_fn;
+		session->connclosed_fn = connclosed_fn; 			
+
+		assert(stream->main_event_base);
+		assert(session->bev == NULL);
+		session->bev = bufferevent_socket_new(stream->main_event_base, -1, BEV_OPT_CLOSE_ON_FREE);
+		assert(session->bev);
 		
-		// create the socket and connect.
-		struct sockaddr saddr;
-		int len = sizeof(saddr);
+		session->buffwait = 2;
+		bufferevent_setcb(session->bev, session_read_handler, NULL, session_buffer_handler, session);
+		bufferevent_enable(session->bev, EV_READ|EV_WRITE);
+		
+		assert(stream->dns_base);
 		assert(host);
-		if (evutil_parse_sockaddr_port(host, &saddr, &len) != 0) {
-			// unable to parse the detail.  What do we need to do?
-			assert(0);
-		}
-		else {
-			// create the socket, and set to non-blocking mode.
-			int handle = socket(AF_INET,SOCK_STREAM,0);
-			assert(handle >= 0);
-			evutil_make_socket_nonblocking(handle);
-
-			int result = connect(handle, &saddr, sizeof(saddr));
-			assert(result < 0);
-			assert(errno == EINPROGRESS);
-	
-			// create a new session (passing in -1 as a handle, so that it doesn't setup all the events)
-			session_t *session = session_new(streamptr, -1);
-			assert(session);
-			assert(session->handle == -1);
-
-			assert(session->usersession == NULL);
-			session->usersession = basedata;
-			
-			session->newconn_fn = newconn_fn;
-			session->connclosed_fn = connclosed_fn; 			
-			
-			// the session object will be created with the write_event paused, but an active read event.  
-			// For the connect, we need to handle the WRITE event.  So we will add our connect_handler to it.  
-			// When it is connected, then will clear that event and it wont be needed again.
-			assert(stream->main_event_base);
-			assert(session->connect_event == NULL);
-			
-// 			fprintf(stderr, "Setting Connect event.  handle=%d, sessionptr=%llx\n", handle, (long long unsigned) session);
-			session->connect_event = event_new(stream->main_event_base, handle, EV_WRITE, session_connect_handler, (void *)session);
-			assert(session->connect_event);
-			event_add(session->connect_event, NULL);	// TODO: Should we set a timeout on the connect?
-		}
+		assert(port > 0);
+		bufferevent_socket_connect_hostname(session->bev, stream->dns_base, AF_UNSPEC, host, port);
+		
+		// Note that nothing will happen if the event loop is not dispatched.  
 	}
 }
-
-
-// Originally we created a new write event each time we needed to.  
-// Logic has changed where now it just adds the event to the system, but dooesnt remove it.  
-// Therefore cannot rely on checking if the event exists.  Must first know if there was nothing in the buffer.
-// NOTE: It is possible for this function to be called before any data is in the buffer.  
-static void setWriteEvent(session_t *session) 
-{
-	assert(session);
-	assert(session->out.event != NULL);
-	assert(session->handle >= 0);
-	
-// 	fprintf(stderr, "Setting WRITE event. handle=%d\n", session->handle);
-	
-	// the event is a one-off event.  If the callback is unable to send all the data in the buffer, 
-	// it will add it back in to the queue again.
-	
-	// Note, we dont do any timeout, so we dont do any throughput throttling.
-	
-	// Adding the event when it is already pending, will not do anything, but we should avoid doing that if we can.  
-	// At this scope though, we cant tell without querying the event system.
-	event_add(session->out.event, NULL);
-}
-
-
-
-
-
-// this function is called when we have are ready to send data on a socket.   
-static void session_write_handler(int hid, short flags, void *data)
-{
-	assert(hid >= 0);
-	assert(flags & EV_WRITE);
-	
-	session_t *session = data;
-	assert(session);
-	
-// 	fprintf(stderr, "session_write_handler. hid=%d, handle=%d\n", hid, session->handle);
-	
-	assert(session->handle == hid);
-	assert(session->stream);
-	
-	// The WRITE event is prepared at the beginning of the sessions.  It is not set for PERSIST, 
-	// so it will now be inactive.  If we do not send all the data we need to send, then we need 
-	// to add this event back in to the base.
-	assert(session->out.event);
-	
-	// we've requested the event, so we should have data to process.
-	assert(session->out.buffer);
-	assert(session->out.length > 0);
-	assert(session->out.max >= session->out.length);
-	assert(session->out.length <= session->out.max);
-	
-	int res = send(hid, session->out.buffer, session->out.length, 0);
-	if (res > 0) {
-		// we managed to send some, or maybe all....
-		assert(res <= session->out.length);
-		if (res == session->out.length) {	
-			// we sent all of it.
-			session->out.length = 0;
-		}
-		else {
-			// we only sent some of it.
-			memmove(session->out.buffer, session->out.buffer + res, session->out.length - res);
-			session->out.length -= res;
-			assert(session->out.length > 0);
-		}
-	}
-	else if (res == 0) {
-		session_close(session);
-	}
-	else {
-		assert(res == -1);
-		if (errno != EAGAIN && errno != EWOULDBLOCK) {
-			session_close(session);
-		}
-	}
-	
-	// if we have not sent everything, then we need to set the event.
-	if (session->out.length > 0) {
-		setWriteEvent(session);
-	}
-	else {
-		if (session->closing > 0) {
-			session_close(session);
-		}
-	}
-}
-
-
-
-
-
-
 
 
 
@@ -788,7 +613,7 @@ static void listen_event_handler(
 	assert(stream->sverify == STRUCT_VERIFIER);
 
 	// TODO: at this point, we are not passing on the address information... however, we will want to do so at some point.
-	
+	fprintf(stderr, "New connection received.\n");
 	
 	// Create the session object.
 	session_t *session = session_new(stream, fd);
@@ -807,7 +632,7 @@ static void default_break_cb(stream_t *stream)
 
 
 
-// Listen on a particular port (and optionally, interface), and when event soccur, call the callback functions.
+// Listen on a particular port (and optionally, interface), and when events occur, call the callback functions.
 // If no Interface is provided, it will attempt to listen on all interfaces.
 // NOTE: an interface normally means an IP address.
 //
@@ -878,7 +703,7 @@ void rispstream_process(RISPSTREAM streamptr)
 
 
 
-// This tells the stream to stop listening on whhatever ports it is listening on.
+// This tells the stream to stop listening on whatever ports it is listening on.
 void rispstream_stop_listen(RISPSTREAM stream)
 {
 	assert(stream);
@@ -905,9 +730,30 @@ void rispstream_idle_callback(RISPSTREAM streamptr, risp_cb_idle idle_fn)
 
 
 
-static void close_handler(int hid, short flags, void *data)
+
+static void session_write_handler(struct bufferevent *bev, void *data)
 {
-	assert(0);
+	session_t *session = data;
+	assert(session != NULL);
+	assert(session->bev);
+	assert(bev == session->bev);
+
+	stream_t *stream = session->stream;
+	assert(stream);
+	assert(stream->risp);
+	
+	// The only time this should fire, is when the session is closing and we want to make sure the outbuffer has been flushed before shutting it down.
+	assert(session->closing == 1);
+
+	struct evbuffer *output = bufferevent_get_output(bev);
+	assert(output);
+	size_t len = evbuffer_get_length(output);
+	assert(len >= 0);
+	if (len == 0) {
+		// Now we can close it.
+		assert(session->handle >= 0);
+		session_close(session);
+	}
 }
 
 // The client calls this to close the session.   If there is data in the buffer, it will try to send it first, and when the connection is actually closed, it will call the callback function.   In other words, this is a non-blocking operation.  If the user wants it to wait till the connection is closed before exiting, then they need to call rispsession_close_wait()
@@ -923,68 +769,44 @@ void rispsession_close(RISPSESSION sessionptr)
 	assert(session->closing == 0);
 	session->closing = 1;
 
+	// if there is data in the outbuffer, add a write-callback to the buffer, so that we know when the data has been written.  Then we can close it all.
+	assert(session->bev);
 	
-	assert(session->out.length >= 0);
-	if (session->out.length == 0 && session->in.length == 0) {
-		// the out and in buffer is empty.  We can clean it up now, and close everything.
-		session_close(sessionptr);
-	}
-	else {
-		// there must be data in one of the buffers.
-		// if there is no write event pending, then we need to set a timeout event.  This means that the socket might be closed 
-		// by the remote end before this event fires, so we need to handle that gracefully too.
-		if (session->out.event == NULL) {
-			assert(session->out.length == 0);
-			
-			assert(session->close_event == NULL);
-			assert(stream->main_event_base);
-			session->close_event = evtimer_new(stream->main_event_base, close_handler, session);
-			assert(session->close_event);
-			struct timeval cto = {0,100};
-			evtimer_add(session->close_event, &cto);
-		}
+	struct evbuffer *output = bufferevent_get_output(session->bev);
+	assert(output);
+	size_t len = evbuffer_get_length(output);
+	assert(len >= 0);
+	if (len > 0) {
+		assert(session->buffwait != -1);
+		bufferevent_setcb(session->bev, session_read_handler, session_write_handler, session_buffer_handler, session);
 	}
 }
 
 
 
-// make sure that the buffer is large enough for the specified length.
-static void maxbuf_out(session_t *session, risp_length_t length) 
-{
-	assert(session);
-	assert(length > 0);
-	
-	if (session->out.length + length > session->out.max) {
-		session->out.max += (session->out.length + length + 1024);
-		session->out.buffer = realloc(session->out.buffer, session->out.max);
-	}
-}
 
-
+// TODO: This function allocates space on the heap, which is not the most efficient way of doing this.  Especially for a fully-determined length.  It should use more efficient buffer manipulation itself.  This will work initially though.
 void rispsession_send_noparam(RISPSESSION sessionptr, risp_command_t command)
 {
 	assert(sessionptr);
 	session_t *session = sessionptr;
 	assert(session);
+	assert(session->bev);
 
-	assert((session->out.max == 0 && session->out.buffer == NULL) || (session->out.max > 0 && session->out.buffer));
-	
-	// if the out-buffer is empty, we are going to need the write event submitted.  
-	// It wont actually do anything with the event until the event-loop processes, 
-	// so it is ok to put this at the top of the function before we actually fill the buffer.
-	if (session->out.length == 0) { setWriteEvent(session); }
-	
 	// make sure there is enough space in the buffer for this transaction.
-	maxbuf_out(session, risp_command_length(command, 0));
-	assert(session->out.max > 0);
-	assert(session->out.length >= 0);
-	assert(session->out.buffer);
+	risp_length_t bufflen = risp_command_length(command, 0);
+	assert(bufflen > 0);
+	void *buff = malloc(bufflen);
+	assert(buff);
 
 	// add the command to the buffer.
-	risp_length_t len = risp_addbuf_noparam(session->out.buffer + session->out.length, command);
-	assert(len > 0);
-	session->out.length += len;
-	assert(session->out.length > 0);
+	risp_length_t len = risp_addbuf_noparam(buff, command);
+// 	fprintf(stderr, "bufflen:%d, len:%d\n", bufflen, len);
+	assert(len == bufflen);
+	
+	int written = bufferevent_write(session->bev, buff, len);
+	assert(written == 0);	/* -1 indicates failure... why would it fail? */
+	free(buff);
 }
 
 
@@ -995,25 +817,22 @@ void rispsession_send_int(RISPSESSION sessionptr, risp_command_t command, risp_i
 	assert(sessionptr);
 	session_t *session = sessionptr;
 	assert(session);
+	assert(session->bev);
 
-	assert((session->out.max == 0 && session->out.buffer == NULL) || (session->out.max > 0 && session->out.buffer));
-
-	// if the out-buffer is empty, we are going to need the write event submitted.  
-	// It wont actually do anything with the event until the event-loop processes, 
-	// so it is ok to put this at the top of the function before we actually fill the buffer.
-	if (session->out.length == 0) { setWriteEvent(session); }
 	
 	// make sure there is enough space in the buffer for this transaction.
-	maxbuf_out(session, risp_command_length(command, 0));
-	assert(session->out.max > 0);
-	assert(session->out.length >= 0);
-	assert(session->out.buffer);
+	risp_length_t bufflen = risp_command_length(command, 0);
+	assert(bufflen > 0);
+	void *buff = malloc(bufflen);
+	assert(buff);
 
 	// add the command to the buffer.
-	risp_length_t len = risp_addbuf_int(session->out.buffer + session->out.length, command, value);
-	assert(len > 0);
-	session->out.length += len;
-	assert(session->out.length > 0);
+	risp_length_t len = risp_addbuf_int(buff, command, value);
+	assert(len == bufflen);
+
+	int written = bufferevent_write(session->bev, buff, len);
+	assert(written == 0);	/* -1 indicates failure... why would it fail? */
+	free(buff);
 }
 
 void rispsession_send_str(RISPSESSION sessionptr, risp_command_t command, risp_int_t length, risp_data_t *data)
@@ -1021,27 +840,22 @@ void rispsession_send_str(RISPSESSION sessionptr, risp_command_t command, risp_i
 	assert(sessionptr);
 	session_t *session = sessionptr;
 	assert(session);
+	assert(session->bev);
 
-	assert((session->out.max == 0 && session->out.buffer == NULL) || (session->out.max > 0 && session->out.buffer));
-
-	// if the out-buffer is empty, we are going to need the write event submitted.  
-	// It wont actually do anything with the event until the event-loop processes, 
-	// so it is ok to put this at the top of the function before we actually fill the buffer.
-	if (session->out.length == 0) { setWriteEvent(session); }
-	
 	// make sure there is enough space in the buffer for this transaction.
-	risp_length_t clen = risp_command_length(command, length);
-	assert(clen > length);
-	
-	maxbuf_out(session, clen);
-	assert(session->out.max >= (session->out.length + clen) );
-	assert(session->out.buffer);
+	risp_length_t bufflen = risp_command_length(command, length);
+	assert(bufflen > length);
+
+	void *buff = malloc(bufflen);
+	assert(buff);
 
 	// add the command to the buffer.
-	risp_length_t len = risp_addbuf_str(session->out.buffer + session->out.length, command, length, data);
-	assert(len > 0);
-	session->out.length += len;
-	assert(session->out.length > 0);
+	risp_length_t len = risp_addbuf_str(buff, command, length, data);
+	assert(len == bufflen);
+
+	int written = bufferevent_write(session->bev, buff, len);
+	assert(written == 0);	/* -1 indicates failure... why would it fail? */
+	free(buff);
 }
 
 

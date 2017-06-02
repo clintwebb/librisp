@@ -1,0 +1,2 @@
+This feature modifies the library so that it uses libevent bufferevents rather than handling the buffer ourselves.
+The Bufferevents system seems to be fairly comprehensive and adaptable.  We should also add the possibility of allowing devs to setup and use their own bufferevents and attach librispstream to it.

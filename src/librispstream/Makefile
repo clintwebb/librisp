@@ -87,7 +87,7 @@ install: $(WORKDIR)/$(LIBFILE)
 
 
 install_dev: $(INCFILE)
-	echo "Copying $(INCFILE) to $(INCDIR)/"
+	@echo "Copying $(INCFILE) to $(INCDIR)/"
 	cp $(INCFILE) $(INCDIR)/
 
 

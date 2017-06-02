@@ -28,13 +28,13 @@
 
 #include <stdio.h>
 
-#if (RISP_VERSION != 0x00040000)
+#if (RISP_VERSION != 0x00040200)
 #error "Incorrect header version.  code and header versions must match."
 #endif
 
 // A Random number that is applied to every risp_t structure to verify that the pointer is actually pointing to an initiated object.
 // NOTE: This identifier should change when functional changes are made to the structure.
-#define RISP_STRUCT_VERIFIER 635706134
+#define RISP_STRUCT_VERIFIER 648564785
 
 
 typedef struct {
@@ -57,6 +57,18 @@ typedef struct {
 // // 'functions' to convert 64-bit longs between host-byte-order and network-byte-order.
 // #define htonll(x) ((1==htonl(1)) ? (x) : ((unsigned long long)htonl((x) & 0xFFFFFFFF) << 32) | htonl((x) >> 32))
 // #define ntohll(x) ((1==ntohl(1)) ? (x) : ((unsigned long long)ntohl((x) & 0xFFFFFFFF) << 32) | ntohl((x) >> 32))
+
+
+//--------------------------------------------------------------------------------------------------
+// Return the library version number (run-time rather than compile-time).  When ensuring that the 
+// right library version is installed, need to use this function rather than the version in the 
+// library header.  This is because the header only gives the version of the library that this was 
+// compiled on, not what it is running on.
+long long risp_version(void)
+{
+	return(RISP_VERSION);
+}
+
 
 
 //--------------------------------------------------------------------------------------------------
@@ -406,6 +418,100 @@ risp_length_t risp_process(RISP r, void *base, risp_length_t len, const void *da
 }
 
 
+//--------------------------------------------------------------------------------------------------
+// Peek in the data buffer to determine how much data we need.   This command will tell you how many 
+// bytes it needs for the next (and only the next) complete command in the buffer.  Note that it may 
+// not have all the data it needs, so it may return how much data it needs to get to the next step.
+risp_length_t risp_needs(risp_length_t len, const void *data)
+{
+	risp_length_t needs = 0;
+	
+	// risp_int_t should be 64-bit long.
+	assert(sizeof(risp_int_t) == 8);
+	
+	// we also do some bit manipulation of the command, and assume that it is 2 bytes only.
+	assert(sizeof(risp_command_t) == 2);
+	
+	const unsigned char *ptr = (char *) data;
+	
+	assert(data != NULL);
+	assert(len >= 0);
+	
+	if (len <= sizeof(risp_command_t)) {
+		needs = sizeof(risp_command_t);
+	}
+	else {
+		
+		// Each command in the protocol is made up of two parts, the style bitmap, and the 
+		// command id.  Together they make up a command in the protocol, but since we will be 
+		// seperating them anyway, we might as well pull them out together.
+
+		risp_command_t cmd = ptr[0];	// add the first byte
+		cmd <<= 8;	// shift it into position.
+		cmd |= ptr[1];
+		
+		ptr += 2;
+
+		// There are certain ranges that are specifically set aside for commands that have no parameters.
+		// These are: 
+		// 		No Parameters - 0x7000 to 0x7fff          0 111 xxxx xxxx
+		// 		No Parameters - 0xc000 to 0xffff          1 1xx xxxx xxxx
+		// We can therefore check for specific bits in the style.
+
+		// Note that 0x7 and 0xC overlap, but thats ok, because the overlap is still within either range.
+		if ((cmd >= 0x7000 && cmd <= 0x7fff) || (cmd >= 0xc000)) {
+			needs = sizeof(risp_command_t);
+		}
+		else {
+		
+			// make sure we haven't made a mistake determining the non-param ranges.
+			assert((cmd < 0x7000 || cmd > 0x7fff) && cmd < 0xc000);
+
+			// Since the command was not within the no-param range, then we need to parse the integer size.
+			short int_bits = (cmd & 0x7000) >> 12;
+			short int_len = 1 << int_bits;
+
+			// We now know how many bytes are needed for the integer.
+			needs = sizeof(risp_command_t) + int_len;
+
+			// Now we need to check if this command has a string that follows or not.  If not, then 
+			// we already know all we need.  If it is a string, we will need to get the integer value, 
+			// because that will tell us how long the string is.
+
+			if ((cmd & 0x8000) != 0) {
+				// this command is a string.
+
+				// this code only handles values up to risp_int_t size.
+				assert(int_len <= sizeof(risp_int_t));
+				// TODO: trim the int_len so that it will fit..
+								
+				// we know how big the integer is, we need to actually get it.
+				risp_int_t intvalue = 0;
+				register short counter;
+				for (counter=0; counter < int_len; counter++) {
+					
+					// shift the value to the left.
+					// not necessary for the first iteration, but it is cheaper than checking for it.
+					intvalue <<= 8;
+					
+					intvalue |= *ptr;
+					ptr ++;
+				}
+						
+				needs = sizeof(risp_command_t) + int_len + intvalue;
+			}
+		}
+	}
+
+	assert(needs >= sizeof(risp_command_t));
+	
+	// return the number of bytes needed to process the next command (including what we already have);
+	return(needs);
+}
+
+
+
+
 
 // to assist with knowing how much space a command will need to be reserved for a buffer, this 
 // function will tell you how many bytes the command will use.
@@ -414,22 +520,44 @@ risp_length_t risp_command_length(risp_command_t command, risp_length_t dataLeng
 	risp_length_t length = 0;
 
 	assert(dataLength >= 0);
+// 	fprintf(stderr, "risp_command_length: command=%X\n", command);
 
-	// the style part of the command is the highest 4-bits.
-	unsigned char style = (command >> (16-4));
-	
 	// start with the size of the command id.
 	length = sizeof(risp_command_t);
+	assert(length == 2);
+// 	fprintf(stderr, "risp_command_length: length=%d\n", length);
+
 	
-	// the lowest 3 bits are the length (2 to the power of) of the integer part.
-	unsigned char int_bits = (style & 0x7);
-	assert(int_bits < 8);
-	unsigned char int_len = 1 << int_bits;
-	length += int_len;
+	if ((command >= 0x7000 && command <= 0x7fff) || (command >= 0xc000)) {
+		// command specifically has no parameters.
+// 		fprintf(stderr, "risp_command_length: no parameters\n");
+		
+		assert(length == 2);
+		assert(dataLength <= 0);
+	}
+	else {
 	
-	// if there was an integer part, AND it is also a string, then we need to add the dataLength part. 
-	if (int_len > 0 && (style & 0x8)) {
-		length += dataLength;
+		// the style part of the command is the highest 4-bits.
+		unsigned char style = (command >> (16-4));
+// 		fprintf(stderr, "risp_command_length: style=%X\n", style);
+		
+		
+		// the lowest 3 bits are the length (2 to the power of) of the integer part.
+		unsigned char int_bits = (style & 0x7);
+		assert(int_bits < 8);
+		unsigned char int_len = 1 << int_bits;
+		length += int_len;
+// 		fprintf(stderr, "risp_command_length: int_bits=%X\n", int_bits);
+// 		fprintf(stderr, "risp_command_length: int_len=%d\n", int_len);
+// 		fprintf(stderr, "risp_command_length: length=%d\n", length);
+		
+		// if there was an integer part, AND it is also a string, then we need to add the dataLength part. 
+		if (int_len > 0 && (style & 0x8)) {
+// 			fprintf(stderr, "risp_command_length: is a string:%d\n", dataLength);
+
+			length += dataLength;
+		}
+// 		fprintf(stderr, "risp_command_length: length=%d\n", length);		
 	}
 	
 	assert(length >= sizeof(risp_command_t));
