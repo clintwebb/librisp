@@ -9,5 +9,6 @@ Includes:
 History:
  2017.05.05 - Merged in 'feature-version' because development of 'feature-bufferevents' requires it.
  2017.05.31 - Merged in 'feature-bufferevents'.  This is needed for the secure-stream work that is the primary focus of this release.
- 
+ 2017.06.02 - Updated 'feature-bufferevents' which has some bugfixes.
+
 
