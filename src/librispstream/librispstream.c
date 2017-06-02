@@ -248,10 +248,11 @@ static void session_close(session_t *session)
 	bufferevent_free(session->bev);
 	session->bev = NULL;
 
-	assert(session->handle >= 0);
-	close(session->handle);
-	session->handle = INVALID_HANDLE;
-
+	if (session->handle >= 0) {
+		close(session->handle);
+		session->handle = INVALID_HANDLE;
+	}
+	
 	assert(session->stream);
 	stream_t *stream = session->stream;
 
@@ -315,6 +316,9 @@ static void session_read_handler(struct bufferevent *bev, void *data)
 	// if we are reading data, the session should NOT be closing.
 	assert(session->closing == 0);
 
+	// if buffwait is -1, it means it wasn't configured when the session was created.
+	assert(session->buffwait != -1);
+	
 	// at this point, the amount of data we are waiting on should be at least 2 or greater.  
 	// This is because the minimum command size is 2 bytes.  Once we know those 2 bytes, 
 	// we can determine what the size of the complete command should be.
@@ -397,11 +401,19 @@ void session_buffer_handler(struct bufferevent *bev, short events, void *ptr)
 	session_t *session = ptr;
 	assert(session);
 	assert(bev);
-	assert(session->bev == bev);
 	assert(events != 0);
 
     if (events & BEV_EVENT_CONNECTED) {
-        // we have successfully connected.
+		// we have successfully connected.
+		assert(session->bev == NULL || session->bev == bev);
+		if (session->bev == NULL) { 
+			session->bev == bev; 
+			
+			// Need to set the watermark for the minimum data needed (2 bytes).  
+			// Once 2 bytes have been read, we will know how much more data we need for the command, so we can then set a new watermark.
+			session->buffwait = 2;
+			bufferevent_setwatermark(session->bev, EV_READ, session->buffwait, 0);
+		}
 		fprintf(stderr, "Connection received.\n");
 		if (session->newconn_fn) {
 			// a callback was specified so we call it.
@@ -409,8 +421,10 @@ void session_buffer_handler(struct bufferevent *bev, short events, void *ptr)
 		}
     } 
     else if (events & (BEV_EVENT_ERROR|BEV_EVENT_EOF)) {
+		assert(session->bev == bev);
 		if (session->connclosed_fn) {
 			(*session->connclosed_fn)(session, session->usersession);
+			assert(session->handle >= 0);
 			session_close(session);
 		}
     }
@@ -442,7 +456,7 @@ static session_t * session_new(stream_t *stream, int handle)
 	session->newconn_fn = NULL;
 	session->connclosed_fn = NULL;
 	session->bev = NULL;
-	session->buffwait = -1;
+	session->buffwait = 2;
 	
 	// pre-create the events that we will be using for this socket. 
 	// only add the read event if a valid handle has been supplied.  If we are initiating a connection, then we dont want the read handler added first.
@@ -454,21 +468,21 @@ static session_t * session_new(stream_t *stream, int handle)
 		session->bev = bufferevent_socket_new(stream->main_event_base, session->handle, BEV_OPT_CLOSE_ON_FREE);
 		assert(session->bev);
 
+		// Need to set the watermark for the minimum data needed (2 bytes).  
+		// Once 2 bytes have been read, we will know how much more data we need for the command, so we can then set a new watermark.
+		assert(session->buffwait >= 2);
+		bufferevent_setwatermark(session->bev, EV_READ, session->buffwait, 0);
+
 		// Need to set the callback routine when new data arrives.
 		fprintf(stderr, "Read handler set.\n");
 		bufferevent_setcb(session->bev, session_read_handler, NULL, session_buffer_handler, session);
 		bufferevent_enable(session->bev, EV_READ|EV_WRITE);
 		
-		// Need to set the watermark for the minimum data needed (2 bytes).  
-		// Once 2 bytes have been read, we will know how much more data we need for the command, so we can then set a new watermark.
-		session->buffwait = 2;
-		bufferevent_setwatermark(session->bev, EV_READ, session->buffwait, 0);
-		
 		// TODO: If there is an idle callback, then we set it with a timeout.
 	}
 	else {
 		assert(session->bev == NULL);
-		assert(0);
+// 		assert(0);
 	}
 	
 	if (stream->idle_callback_fn) {
@@ -557,11 +571,11 @@ int rispstream_connect(RISPSTREAM streamptr, char *host, int port, void *basedat
 
 		assert(stream->main_event_base);
 		assert(session->bev == NULL);
-		
 		session->bev = bufferevent_socket_new(stream->main_event_base, -1, BEV_OPT_CLOSE_ON_FREE);
 		assert(session->bev);
 		
-		bufferevent_setcb(session->bev, session_read_handler, NULL, session_buffer_handler, stream->main_event_base);
+		session->buffwait = 2;
+		bufferevent_setcb(session->bev, session_read_handler, NULL, session_buffer_handler, session);
 		bufferevent_enable(session->bev, EV_READ|EV_WRITE);
 		
 		assert(stream->dns_base);
@@ -721,9 +735,7 @@ static void session_write_handler(struct bufferevent *bev, void *data)
 {
 	session_t *session = data;
 	assert(session != NULL);
-
-	fprintf(stderr, "Close Handle. bev=%llx\n", bev);
-	
+	assert(session->bev);
 	assert(bev == session->bev);
 
 	stream_t *stream = session->stream;
@@ -739,6 +751,7 @@ static void session_write_handler(struct bufferevent *bev, void *data)
 	assert(len >= 0);
 	if (len == 0) {
 		// Now we can close it.
+		assert(session->handle >= 0);
 		session_close(session);
 	}
 }
@@ -764,6 +777,7 @@ void rispsession_close(RISPSESSION sessionptr)
 	size_t len = evbuffer_get_length(output);
 	assert(len >= 0);
 	if (len > 0) {
+		assert(session->buffwait != -1);
 		bufferevent_setcb(session->bev, session_read_handler, session_write_handler, session_buffer_handler, session);
 	}
 }
