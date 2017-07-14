@@ -25,10 +25,14 @@
 #include <errno.h>
 #include <event.h>
 #include <event2/bufferevent.h>
+#include <event2/bufferevent_ssl.h>
 #include <event2/dns.h>
 #include <event2/listener.h>
 #include <fcntl.h>
 #include <risp.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#include <openssl/rand.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -54,7 +58,7 @@
 // and a buffer for pending outgoing data.
 // When the session object is created, the read/write and any other events should be constructed.  Then, when we activate them, we dont have to keep re-creating them.
 typedef struct {
-	int handle;
+// 	int handle;
 	RISPSTREAM stream;
 	
 	// The index is used to find this session entry in the array of pointers of all the sessions.  
@@ -71,6 +75,8 @@ typedef struct {
 	
 	int closing;
 	struct event *close_event;
+	
+	SSL *client_ssl;
 
 	risp_cb_newconn newconn_fn;
 	risp_cb_connclosed connclosed_fn;
@@ -94,6 +100,11 @@ typedef struct {
 	char flag_internal_event_base;		// (0=not internal; 1=internal)
 	struct event_base *main_event_base;
 	struct evdns_base *dns_base;
+
+	int use_ssl;
+	SSL_CTX *server_ctx;
+	SSL_CTX *client_ctx;
+	risp_cb_passphrase passphrase_fn;
 	
 	struct evconnlistener *listener;
 	struct event *stream_cleanup_event;
@@ -169,10 +180,15 @@ RISPSTREAM rispstream_init(struct event_base *base)
 	}
 
 	// setup the event DNS resolver, so that it can resolve DNS requests without blocking.
-	assert(stream->main_event_base);
-	stream->dns_base = evdns_base_new(stream->main_event_base, 1);
-	assert(stream->dns_base);
+// 	assert(stream->main_event_base);
+// 	stream->dns_base = evdns_base_new(stream->main_event_base, 1);
+// 	assert(stream->dns_base);
 
+	stream->use_ssl = 0;
+	stream->server_ctx = NULL;
+	stream->client_ctx = NULL;
+	stream->passphrase_fn = NULL;
+	
 	stream->idle_callback_fn = NULL;
 	stream->break_callback_fn = NULL;
 	stream->newconn_callback_fn = NULL;
@@ -203,36 +219,6 @@ RISPSTREAM rispstream_init(struct event_base *base)
 
 
 
-
-void rispstream_shutdown(RISPSTREAM streamptr)
-{
-	assert(streamptr);
-	stream_t *stream = streamptr;
-	
-	assert(0);
-	
-	
-}
-
-
-
-// if the libevents are not controlled by the calling software, then we initialise and maintain our own.
-void rispstream_init_events(RISPSTREAM streamptr)
-{
-	stream_t *stream = streamptr;
-	assert(stream);
-	assert(stream->sverify == STRUCT_VERIFIER);
-	if (stream->sverify == STRUCT_VERIFIER) {
-	
-		if (stream->main_event_base == NULL) {
-			
-			assert(0);
-			
-		}
-	}
-}
-
-
 // When the underlying transport is closed (normally from the other side), we need to do some cleanup.
 static void session_close(session_t *session) 
 {
@@ -244,15 +230,12 @@ static void session_close(session_t *session)
 		session->close_event = NULL;
 	}
 
-	assert(session->bev);
-	bufferevent_free(session->bev);
-	session->bev = NULL;
-
-	if (session->handle >= 0) {
-		close(session->handle);
-		session->handle = INVALID_HANDLE;
+	if (session->bev) {
+		assert(session->bev);
+		bufferevent_free(session->bev);
+		session->bev = NULL;
 	}
-	
+
 	assert(session->stream);
 	stream_t *stream = session->stream;
 
@@ -269,7 +252,8 @@ static void session_close(session_t *session)
 	// Note that we dont need to keep the array in order.  So we just have to take the last 
 	// entry at the end of the array and move it to this newly empty spot.
 	
-	// since we are closing a session, we can be sure that the 'next' session slot should definately be greater than zero.  There should be definately at least one session in the array.
+	// since we are closing a session, we can be sure that the 'next' session slot should definately 
+	// be greater than zero.  There should be definately at least one session in the array.
 	assert(stream->next_session_slot > 0);
 	int slot = stream->next_session_slot - 1;
 	assert(slot >= 0);
@@ -296,6 +280,52 @@ static void session_close(session_t *session)
 	free(session);
 }
 
+
+void rispstream_shutdown(RISPSTREAM streamptr)
+{
+	assert(streamptr);
+	stream_t *stream = streamptr;
+	
+	
+	while (stream->max_sessions > 0) {
+		stream->max_sessions --;
+		if (stream->sessions[stream->max_sessions]) {
+			session_close(stream->sessions[stream->max_sessions]);
+		}
+	}
+	stream->next_session_slot = 0;
+	free(stream->sessions);
+	stream->sessions = NULL;
+
+	if (stream->flag_internal_event_base == 1) {
+		// we initiated the libevent for the user.  So we should clean it up now.
+		event_base_free(stream->main_event_base);
+		stream->main_event_base = NULL;
+	}
+	
+	free(stream);
+}
+
+
+
+// if the libevents are not controlled by the calling software, then we initialise and maintain our own.
+void rispstream_init_events(RISPSTREAM streamptr)
+{
+	stream_t *stream = streamptr;
+	assert(stream);
+	assert(stream->sverify == STRUCT_VERIFIER);
+	if (stream->sverify == STRUCT_VERIFIER) {
+	
+		if (stream->main_event_base == NULL) {
+			
+			assert(0);
+			
+		}
+	}
+}
+
+
+
 //--------------------------------------------------------------------------------------------------
 // This function is called when we have received enough data in our buffer to attempt to process it.  
 // At a minimum we need 2 bytes.  From those two bytes, we can then determine how much more data we 
@@ -305,7 +335,7 @@ static void session_read_handler(struct bufferevent *bev, void *data)
 	session_t *session = data;
 	assert(session != NULL);
 
-	fprintf(stderr, "Data received.\n");
+// 	fprintf(stderr, "Data received.\n");
 	
 	assert(bev == session->bev);
 
@@ -421,10 +451,10 @@ void session_buffer_handler(struct bufferevent *bev, short events, void *ptr)
 		}
     } 
     else if (events & (BEV_EVENT_ERROR|BEV_EVENT_EOF)) {
+		fprintf(stderr, "SESSION CLOSED\n");
 		assert(session->bev == bev);
 		if (session->connclosed_fn) {
 			(*session->connclosed_fn)(session, session->usersession);
-			assert(session->handle >= 0);
 			session_close(session);
 		}
     }
@@ -450,7 +480,6 @@ static session_t * session_new(stream_t *stream, int handle)
 	assert(session);
 	
 	session->stream = stream;
-	session->handle = handle;
 	session->closing = 0;
 	session->close_event = NULL;
 	session->newconn_fn = NULL;
@@ -458,14 +487,31 @@ static session_t * session_new(stream_t *stream, int handle)
 	session->bev = NULL;
 	session->buffwait = 2;
 	
+	// if the stream is setup to use certificates, then this session will need to be also.
+	assert(stream->use_ssl == 0 || (stream->use_ssl == 1 && stream->server_ctx));
+	if (stream->server_ctx) {
+		session->client_ssl = SSL_new(stream->server_ctx);
+		assert(session->client_ssl);
+	}
+	else {
+		session->client_ssl = NULL;
+	}
+	
 	// pre-create the events that we will be using for this socket. 
 	// only add the read event if a valid handle has been supplied.  If we are initiating a connection, then we dont want the read handler added first.
-	if (session->handle >= 0) {
+	if (handle >= 0) {
 
 		// we have a socket handle, now we need to create the evbuffer, and it will handle the socket from now on.
 		assert(stream->main_event_base);
-		assert(session->handle >= 0);
-		session->bev = bufferevent_socket_new(stream->main_event_base, session->handle, BEV_OPT_CLOSE_ON_FREE);
+		assert(handle >= 0);
+		if (session->client_ssl == NULL) {
+			// Not using certificates.
+			session->bev = bufferevent_socket_new(stream->main_event_base, handle, BEV_OPT_CLOSE_ON_FREE);
+		} 
+		else {
+			// certificates are being used.  Therefore, we accept the socket with an SSL context.
+			session->bev = bufferevent_openssl_socket_new(stream->main_event_base, handle, session->client_ssl, BUFFEREVENT_SSL_ACCEPTING, BEV_OPT_CLOSE_ON_FREE);
+		}
 		assert(session->bev);
 
 		// Need to set the watermark for the minimum data needed (2 bytes).  
@@ -561,7 +607,6 @@ int rispstream_connect(RISPSTREAM streamptr, char *host, int port, void *basedat
 		// create a new session (passing in -1 as a handle, so that it doesn't setup all the events)
 		session_t *session = session_new(streamptr, -1);
 		assert(session);
-		assert(session->handle == -1);
 
 		assert(session->usersession == NULL);
 		session->usersession = basedata;
@@ -569,19 +614,49 @@ int rispstream_connect(RISPSTREAM streamptr, char *host, int port, void *basedat
 		session->newconn_fn = newconn_fn;
 		session->connclosed_fn = connclosed_fn; 			
 
+		session->buffwait = 2;
+
 		assert(stream->main_event_base);
 		assert(session->bev == NULL);
-		session->bev = bufferevent_socket_new(stream->main_event_base, -1, BEV_OPT_CLOSE_ON_FREE);
-		assert(session->bev);
+		if (stream->client_ctx == NULL) {
+			session->bev = bufferevent_socket_new(stream->main_event_base, -1, BEV_OPT_CLOSE_ON_FREE);
+			assert(session->bev);
+			
+			bufferevent_setcb(session->bev, session_read_handler, NULL, session_buffer_handler, session);
+			bufferevent_enable(session->bev, EV_READ|EV_WRITE);
+			
+			assert(stream->dns_base);
+			assert(host);
+			assert(port > 0);
+			int rc = bufferevent_socket_connect_hostname(session->bev, stream->dns_base, AF_UNSPEC, host, port);
+			assert (rc >= 0);
+
+		}
+		else {
+			// Need to connect with openssl.
+			assert(stream->server_ctx == NULL);
+			
+			assert(session->client_ssl == NULL);
+			session->client_ssl = SSL_new(stream->client_ctx);
+			assert(session->client_ssl);
+			
+			assert(session->bev == NULL);
+			session->bev = bufferevent_openssl_socket_new(stream->main_event_base, -1, session->client_ssl, BUFFEREVENT_SSL_CONNECTING, BEV_OPT_CLOSE_ON_FREE);
+			assert(session->bev);
+	
+			bufferevent_setcb(session->bev, session_read_handler, NULL, session_buffer_handler, session);
+			bufferevent_enable(session->bev, EV_READ|EV_WRITE);
 		
-		session->buffwait = 2;
-		bufferevent_setcb(session->bev, session_read_handler, NULL, session_buffer_handler, session);
-		bufferevent_enable(session->bev, EV_READ|EV_WRITE);
-		
-		assert(stream->dns_base);
-		assert(host);
-		assert(port > 0);
-		bufferevent_socket_connect_hostname(session->bev, stream->dns_base, AF_UNSPEC, host, port);
+			int rc = bufferevent_socket_connect_hostname(session->bev, stream->dns_base, AF_UNSPEC, host, port);
+			assert (rc >= 0);
+			if (rc < 0) {
+				// warnx("could not connect: %s", evutil_socket_error_to_string(EVUTIL_SOCKET_ERROR()));
+				assert(0);
+				// is this step a blocking one?
+				bufferevent_free(session->bev);
+				session->bev = NULL;
+			}
+		}
 		
 		// Note that nothing will happen if the event loop is not dispatched.  
 	}
@@ -628,6 +703,16 @@ static void default_break_cb(stream_t *stream)
 }
 
 
+// When a certificate is used that requires a passphrase, this will set the callback that will provide the passphrase.  The implementation may want to get the passphrase from the user somehow.
+void rispstream_set_passphrase_callback(RISPSTREAM streamptr, risp_cb_passphrase passphrase_fn)
+{
+	stream_t *stream = streamptr;
+	assert(stream);
+	assert(passphrase_fn);
+	
+	assert(stream->passphrase_fn == NULL);
+	stream->passphrase_fn = passphrase_fn;
+}
 
 
 
@@ -639,11 +724,12 @@ static void default_break_cb(stream_t *stream)
 // Returns:
 //	0 - Everything was successful.
 //  1 - Unable to listen on the required socket port or address.
-int rispstream_listen(RISPSTREAM streamptr, char *interface, risp_cb_newconn newconn_fn, risp_cb_connclosed connclosed_fn)
+int rispstream_listen(RISPSTREAM streamptr, char *host, int port, risp_cb_newconn newconn_fn, risp_cb_connclosed connclosed_fn)
 {
 	stream_t *stream = streamptr;
 	assert(stream);
-	assert(interface);
+	assert(host);
+	assert(port > 0);
 	
 	stream->newconn_callback_fn = newconn_fn;
 	stream->connclosed_callback_fn = connclosed_fn;
@@ -654,6 +740,10 @@ int rispstream_listen(RISPSTREAM streamptr, char *interface, risp_cb_newconn new
 	memset(&sin, 0, sizeof(sin));
 	sin.sin_family = AF_INET;	// currently just supporting IPv4
 	len = sizeof(sin);
+
+	// The host and port are provided seperately, but the evutil_parse_sockaddr_port function parses a string.
+	char interface[4096];
+	sprintf(interface, "%s:%d", host, port);
 	
 	assert(sizeof(struct sockaddr_in) == sizeof(struct sockaddr));
 	if (evutil_parse_sockaddr_port(interface, (struct sockaddr *)&sin, &len) != 0) {
@@ -693,7 +783,8 @@ void rispstream_process(RISPSTREAM streamptr)
 		// enter the event loop.  This will continue to run until the shutdown process has closed off 
 		// all the active events.
 		assert(stream->main_event_base);
-		event_base_loop(stream->main_event_base, 0);
+		int ret = event_base_loop(stream->main_event_base, 0);
+		assert(ret >= 0);
 		//==============================================================================================
 
 	}
@@ -730,7 +821,8 @@ void rispstream_idle_callback(RISPSTREAM streamptr, risp_cb_idle idle_fn)
 
 
 
-
+// This write handler is only ever set when we are closing the session.  
+// This allows us to know when the buffer is empty so we can close it.
 static void session_write_handler(struct bufferevent *bev, void *data)
 {
 	session_t *session = data;
@@ -751,7 +843,6 @@ static void session_write_handler(struct bufferevent *bev, void *data)
 	assert(len >= 0);
 	if (len == 0) {
 		// Now we can close it.
-		assert(session->handle >= 0);
 		session_close(session);
 	}
 }
@@ -765,6 +856,8 @@ void rispsession_close(RISPSESSION sessionptr)
 	stream_t *stream = session->stream;
 	assert(stream);
 
+	fprintf(stderr, "RISPSESSION: Closing Session\n");
+	
 	// mark the session as closing.  If we dont close the session now, then it will be closed when the outbuffer is emptied.
 	assert(session->closing == 0);
 	session->closing = 1;
@@ -777,8 +870,37 @@ void rispsession_close(RISPSESSION sessionptr)
 	size_t len = evbuffer_get_length(output);
 	assert(len >= 0);
 	if (len > 0) {
+		fprintf(stderr, "RISPSESSION: Session is not empty (%lu).  Waiting for empty.\n", len);
 		assert(session->buffwait != -1);
-		bufferevent_setcb(session->bev, session_read_handler, session_write_handler, session_buffer_handler, session);
+		bufferevent_disable(session->bev, EV_READ);
+		bufferevent_setcb(session->bev, NULL, session_write_handler, session_buffer_handler, session);
+	}
+	else {
+		fprintf(stderr, "RISPSESSION: Session is empty (%lu).  Closing Now.\n", len);
+		bufferevent_disable(session->bev, EV_READ|EV_WRITE);
+		
+		SSL *ctx = bufferevent_openssl_get_ssl(session->bev);
+		assert(ctx);
+
+		/*
+		* SSL_RECEIVED_SHUTDOWN tells SSL_shutdown to act as if we had already
+		* received a close notify from the other end.  SSL_shutdown will then
+		* send the final close notify in reply.  The other end will receive the
+		* close notify and send theirs.  By this time, we will have already
+		* closed the socket and the other end's real close notify will never be
+		* received.  In effect, both sides will think that they have completed a
+		* clean shutdown and keep their sessions valid.  This strategy will fail
+		* if the socket is not ready for writing, in which case this hack will
+		* lead to an unclean shutdown and lost session on the other end.
+		*/
+		SSL_set_shutdown(ctx, SSL_RECEIVED_SHUTDOWN);
+		SSL_shutdown(ctx);
+		
+		bufferevent_free(session->bev);
+		session->bev = NULL;
+		
+		// Now we can close it.
+		session_close(session);
 	}
 }
 
@@ -906,5 +1028,134 @@ void rispstream_set_userdata(RISPSTREAM streamptr, void *userdata)
 	if (stream->sverify == STRUCT_VERIFIER) {
 		stream->userdata = userdata;
 	}
+}
+
+
+void rispstream_use_ssl(RISPSTREAM streamptr)
+{
+	stream_t *stream = streamptr;
+	assert(stream);
+
+	assert(stream->sverify == STRUCT_VERIFIER);
+	if (stream->sverify == STRUCT_VERIFIER) {
+		assert(stream->use_ssl == 0);
+		stream->use_ssl = 1;
+	}
+}
+
+
+// This is a callback function that will be called by OpenSSL when it is trying to use a certificate with a password protected key.
+int cert_passphrase_cb(char *buf, int size, int rwflag, void *userdata)
+{
+	assert(buf);
+	assert(userdata);
+	
+	fprintf(stderr, "Passphrase Callback (size:%d)\n", size);
+
+	
+	int len = 0;
+	
+	stream_t *stream = userdata;
+	assert(stream->sverify == STRUCT_VERIFIER);
+	if (stream->sverify == STRUCT_VERIFIER) {
+		if (stream->passphrase_fn) {
+			len = (*stream->passphrase_fn)(stream, size, buf);
+		}
+	}
+	
+	assert(len >= 0);
+	return(len);
+}
+
+
+// User is adding the required cert data needed for a listening service.  CA file should also contain CA's for client-cert authentication if that is used.
+// Returns: 0 - on success.  ca and pkey were loaded successfully.
+//          -1 - failure.  either the files didn't exist, were in the wrong format, or didn't match.
+int rispstream_add_server_certs(RISPSTREAM streamptr, char *ca_pem_file, char *ca_pkey_file)
+{
+	stream_t *stream = streamptr;
+	assert(stream);
+	
+	assert(ca_pem_file);
+	assert(ca_pkey_file);
+	
+	assert(stream->server_ctx == NULL);
+
+	/* Initialize the OpenSSL library */
+	SSL_load_error_strings();
+	SSL_library_init();
+	/* We MUST have entropy, or else there's no point to crypto. */
+	if (!RAND_poll())
+		return -1;
+
+	stream->server_ctx = SSL_CTX_new(SSLv23_server_method());
+	assert(stream->server_ctx);
+
+	// if the client certificate has a passphrase (meaning that the private key is encrypted), then a callback routine will be called asking for the passphrase.   If a passphrase hasn't been stored for this stream, then we will need to ask the user for it.
+	SSL_CTX_set_default_passwd_cb(stream->server_ctx, cert_passphrase_cb);
+	SSL_CTX_set_default_passwd_cb_userdata(stream->server_ctx, stream);
+
+	
+	if (! SSL_CTX_use_certificate_chain_file(stream->server_ctx, ca_pem_file) ||
+		! SSL_CTX_use_PrivateKey_file(stream->server_ctx, ca_pkey_file, SSL_FILETYPE_PEM)) {
+		stream->server_ctx = NULL;
+	}
+	else {
+		SSL_CTX_set_options(stream->server_ctx, SSL_OP_NO_SSLv2);
+	}
+	
+	// return 0 if the context was created, otherwise a 1.
+	return stream->server_ctx ? 0 : -1;
+}
+
+
+// User is adding the required cert data needed for connecting.
+// Returns: 0 - on success.  ca and pkey were loaded successfully.
+//          -1 - failure.  either the files didn't exist, were in the wrong format, or didn't match.
+int rispstream_add_client_certs(RISPSTREAM streamptr, char *ca_pem_file, char *ca_pkey_file)
+{
+	stream_t *stream = streamptr;
+	assert(stream);
+
+	assert(ca_pem_file);
+	assert(ca_pkey_file);
+
+	assert(stream->client_ctx == NULL);
+
+	/* Initialize the OpenSSL library */
+	SSL_load_error_strings();
+	SSL_library_init();
+	/* We MUST have entropy, or else there's no point to crypto. */
+	if (!RAND_poll())
+		return -1;
+
+	assert(stream->client_ctx == NULL);
+	stream->client_ctx = SSL_CTX_new(SSLv23_client_method());
+	assert(stream->client_ctx);
+
+	// if the client certificate has a passphrase (meaning that the private key is encrypted), then a callback routine will be called asking for the passphrase.   If a passphrase hasn't been stored for this stream, then we will need to ask the user for it.
+	SSL_CTX_set_default_passwd_cb(stream->client_ctx, cert_passphrase_cb);
+	SSL_CTX_set_default_passwd_cb_userdata(stream->client_ctx, stream);
+
+	
+	int rc = SSL_CTX_use_certificate_file(stream->client_ctx, ca_pem_file, SSL_FILETYPE_PEM);
+	if (rc == 1) {
+		rc = SSL_CTX_use_PrivateKey_file(stream->client_ctx, ca_pkey_file, SSL_FILETYPE_PEM);
+		if (rc != 1) {
+			stream->client_ctx = NULL;
+		}
+	}
+	
+	// return 0 if the context was created, otherwise a 1.
+	return stream->client_ctx ? 0 : -1;
+}
+
+
+extern struct event_base * rispstream_get_eventbase(RISPSTREAM streamptr)
+{
+	stream_t *stream = streamptr;
+	assert(stream);
+
+	return(stream->main_event_base);
 }
 
