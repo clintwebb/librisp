@@ -86,9 +86,11 @@ install: $(WORKDIR)/$(LIBFILE)
 
 
 
-install_dev: $(INCFILE)
+install_dev: $(INCFILE) $(WORKDIR)/$(LIBNAME).o
 	@echo "Copying $(INCFILE) to $(INCDIR)/"
-	cp $(INCFILE) $(INCDIR)/
+	cp -v $(INCFILE) $(INCDIR)/
+	@echo "Copying $(WORKDIR)/$(LIBNAME).o to $(LIBDIR)"
+	cp -v $(WORKDIR)/$(LIBNAME).o $(LIBDIR)/
 
 
 man-pages: manpages/*
