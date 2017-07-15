@@ -1,0 +1,43 @@
+Librisp follows a structured release model using feature branches.
+
+Development Cycle:
+ * As features are developed, they are kept in seperate feature branches (normally locally to the developer).
+ * A text file should be created in doc/versions/feature-<feature name>.txt that describes the feature that is being developed.
+ * When changes are complete, issue a Pull request or otherwise inform the maintainers that it is ready to be included in a release.
+
+Release Cycle:
+ * When a release is being scheduled, a release branch is created from 'master'.  
+ * Features that are ready to be included are then merged into it.
+ * a new directory is created in docs/versions/version-<version number>
+ * the feature text files docs/versions/feature-*.txt are moved to the release directory.
+ * a release is closed when all current features have been included, or when a specified date has been reached.
+ * the feature branch developers are asked to merge the testing branch into their feature branch to ensure compatibility with the other features being included in the release.
+ * feature branch developers should 'tag' their feature before merging in the 'testing' branch.
+
+Testing Cycle:
+ * When a release is ready to be tested...
+ * Testing branch is merged from 'master' to ensure all subsequent changes are included.
+ * Release branch (which includes all the features) is merged into the 'testing' branch.
+ * Changes to the testing branch are then tested against an automated or manual test suite.
+ * Any faults in the testing cycle are reported back, and fixed.
+ * The testing cycle continues until the testing branch passes all tests.
+ * The release is then applied to the staging branch.
+
+Staging Cycle:
+ * Staging is merged from 'master' (to ensure it is the same)
+ * Release is merged into 'staging' branch.
+ * Staging branch is pushed to the primary github repository.
+ * Staging packages are built and distributed to webpage.
+ * Some environments may then use the staging libraries to iron out any more issues before putting into production.
+ * Depending on the risk of the change, a date will be set, which will end the staging cycle.
+ * Any issues that are reported, will reset the release.
+
+Production:
+ * When a staging release has been declared fit, it will be merged into master.
+ * Master branch pushed to primary github repository.
+ * Production packages will be built and delivered.
+ * Master branch will be tagged with the release version.
+ * feature-branches that were included in the release will be deleted.
+ * release branch will be removed.
+
+
