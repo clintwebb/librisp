@@ -1,0 +1,34 @@
+.\" man page for librisp
+.\" Contact webb.clint@gmail.com to correct errors or omissions. 
+.TH risp_needs 3 "4 May 2017" "4.00.00" "Return the amount of data required for the next command in a buffer."
+.SH NAME
+risp_needs \- Return the amount of data required for the next command in a buffer.
+.SH SYNOPSIS
+.B #include <risp.h>
+.sp
+.B risp_length_t risp_needs(risp_length_t len, const void *data);
+.sp
+compile with the 
+.B -lrisp
+option
+
+.SH DESCRIPTION
+.B risp_needs()
+will return the amount of data required for the next command in a buffer.  This would normally be used to ensure that the entire command is in the buffer.  It will return the total size of the next command, if it has enough information to determine that.  If there is not enough data, it will return the amount of data needed to at least get to the next step.
+.sp
+Note that it returns the total size of the data needed, including what is already in there.  If you have 2 bytes, but the total command is 5 bytes, it will return 5, not the 3 that is missing.
+.sp
+This command compliments 
+.B risp_command_length() 
+which is used to determine how much buffer size is needed to hold a particular command type (ie, when adding data to a buffer).  
+.B risp_needs()
+is used to determine how much is needed in a buffer for the next command already in the buffer (ie, when processing data in the buffer).
+.SH SEE ALSO
+.BR risp (3),
+.BR risp_command_lenth (3)
+.SH AUTHOR
+.nf
+Clint Webb (webb.clint@gmail.com)
+.br
+http://risp.rhokz.com/
+.fi

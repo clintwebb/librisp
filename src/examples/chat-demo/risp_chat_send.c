@@ -29,20 +29,31 @@
 #include <unistd.h>			// fcntl, close, getopt
 
 #include <risp.h>
+#include <rispstream.h>
 
 #include "risp_chat_prot.h"
 
 
-// this variable is used to indicate that the user wants this application to exit.  They have 
-// pressed Ctrl-C, and we need to drop the connection and exit.
-static int _sigtrap = 0;
 
 
 typedef struct {
-	risp_int_t msg_id;
-	risp_int_t latest_msg_id;
+	RISPSTREAM stream;
+	RISPSESSION session;
 	char *name;
+	char *message;
 } data_t;
+
+
+//--------------------------------------------------------------------------------------------------
+// this callback is called if we have an invalid command.  We shouldn't be receiving any invalid 
+// commands.
+void cmdInvalid(void *base, void *data)
+{
+	unsigned char *cast;
+	cast = (unsigned char *) data;
+	printf("Received invalid: [%d, %d, %d]\n", cast[0], cast[1], cast[2]);
+	assert(0);
+}
 
 
 
@@ -56,192 +67,117 @@ void cmdNop(void *base)
 void cmdHelloAck(void *base) 
 {
 	assert(base);
+	data_t *data = base;
+	assert(data);
+	assert(data->session);
 	
 	printf("Connected.\n");
-}
-
-
-
-void cmdMsgID(void *base, risp_int_t value) 
-{
-	data_t *data = (data_t *) base;
-	assert(data);
 	
-	assert(value > 0);
-	data->msg_id = value;
-}
-
-
-
-void cmdLatestMsgID(void *base, risp_int_t value) 
-{
-	data_t *data = (data_t *) base;
-	assert(data);
+	// set the session in NO ECHO mode.
+	rispsession_send_noparam(data->session, CMD_NOECHO);
 	
-	assert(value > 0);
-	assert(value >= data->latest_msg_id);
-	data->latest_msg_id = value;
-}
+	// set the session in NO FOLLW mode.
+	rispsession_send_noparam(data->session, CMD_NOFOLLOW);
 
+	// set the session in NO UPDATE mode.
+	rispsession_send_noparam(data->session, CMD_NOUPDATE);
 
-// store the name provided.  No other action.
-void cmdName(void *base, char *value, risp_length_t length)
-{
-	data_t *data = (data_t *) base;
-	assert(data);
-
-	// we either have data, or we dont.
-	assert((value && length > 0) || (value == NULL && length == 0));
+	// if we have a 'name' specified, then set that.
+	if (data->name) {
+		rispsession_send_str(data->session, CMD_NAME, strlen(data->name), (risp_data_t *) data->name);
+	}
 	
-	// if there is already a name stored, then we free it.   
-	// NOTE: this is simple to implement, but not very good for large server applications. You will 
-	//       end up with memory fragmentation.  For this simple example it is adequate, but use your 
-	//       memory more wisely for production applications.  You can implement a buffer that 
-	//       expands, or pre-allocate space for the largest name.
-	if (data->name) { free(data->name); }
-	data->name = malloc(length + 1);
-	memcpy(data->name, value, length);
-	data->name[length] = 0;
-}
-
-// We have received a new message.  For this simple purpose, we are just going to output what we 
-// receive.  For proper applications you would do some sanity checking of the data to ensure that it 
-// is safe to output.
-void cmdMessage(void *base, char *value, risp_length_t length)
-{
-	data_t *data = (data_t *) base;
-	assert(data);
-
-	// we either have data, or we dont.
-	assert((value && length > 0) || (value == NULL && length == 0));
-
-	// copy the data to a temporary buffer, and NULL terminate it so it is a string we can use.
-	char *message = malloc(length+1);
-	assert(message);
-	memcpy(message, value, length);
-	message[length] = 0;
+	// now add the message
+	assert(data->message);
+	rispsession_send_str(data->session, CMD_MESSAGE, strlen(data->message), (risp_data_t *) data->message);
 		
-	// Normally you would verify that the data is safe to print, but for this excersize, we are just 
-	// going to print it.
-	char *name = data->name ? data->name : "Anonymous";
-	printf("%s:\n%s\n\n", name, message);
-
+	// and finally, tell the server to close the connection once it is finished.
+	rispsession_send_noparam(data->session, CMD_GOODBYE);
 }
-
 
 
 
 //--------------------------------------------------------------------------------------------------
-// set the socket in non-blocking mode.  In blocking mode, if it cant perform the operation because 
-// either there is no data, or buffers are full, the function will wait until either there is data, 
-// or the buffers are free.   In non-blocking mode, if the function cant perform the operation, it 
-// will return immediatly with an error code that indicates such.  This allows us to attempt a 
-// receive on the socket, but continue and do other things if there is no data ready.
-void sock_nonblock(int handle)
+// Callback routine for when a new connection is established as part of the stream.  Locally we 
+// would then keep track of the details we need to keep to interact with the stream session.
+void connect_cb(RISPSESSION session, void *basedata)
 {
-	assert(handle > 0);
+	assert(session);
+	assert(basedata);
 	
-	int opts = fcntl(handle, F_GETFL);
-	if (opts >= 0) {
-		opts = (opts | O_NONBLOCK);
-		fcntl(handle, F_SETFL, opts);
-	}
-}
-
-//--------------------------------------------------------------------------------------------------
-// connect to the host and port.  
-// Return the socket handle on success.  
-// Otherwise return negative value.
-int sock_connect(char *host, int port)
-{
-	int handle = -1;
-	int resolved = 0;
-
-	struct sockaddr_in sin;
-	assert(host && port > 0);
-	
-    assert(host && host[0] != '\0' && port > 0);
-
-    // First, assign the family (IPv4 and port).
-    sin.sin_family = AF_INET;
-    sin.sin_port = htons(port);
-
-    // Look up by standard notation (xxx.xxx.xxx.xxx) first.
-    unsigned long ip4addr = inet_addr(host);
-    if ( ip4addr != (unsigned long)(-1) )  {
-        // Success. Assign, and we're done.  Since it was an actual IP address, then we dont do any 
-        // DNS lookup for that, so we cant do any checking for any other address type (such as MX).
-        sin.sin_addr.s_addr = ip4addr;
-		resolved ++;
-    }
-    else {
-		// If that didn't work, try to resolve host name by DNS.
-		struct hostent *hp = gethostbyname(host);
-		if(hp) {
-			memcpy( &(sin.sin_addr.s_addr), &(hp->h_addr[0]), hp->h_length);
-			resolved ++;
-		}
-	}
-	
-	// if we were able to resolve the server:port, then we continue.
-	if (resolved > 0) {
-		// Create the socket
-		handle = socket(AF_INET,SOCK_STREAM,0);
-		if (handle >= 0) {
-			// Connect to the server
-			if (connect(handle, (struct sockaddr*)&sin, sizeof(struct sockaddr)) < 0) {
-				// was unable to connect, so we close the socket handle.  Set the handle to -1 to 
-				// indicate failure.
-				close(handle);
-				handle = -1;
-			}
-		}
-	}
-
-	return(handle);
-}
-
-
-// send over the socket.  Whether we are in blocking mode or not, we will continue sending until all 
-// the data is sent.  
-int sock_send(int sock, char *data, int len)
-{
-	assert(sock >= 0);
+	data_t *data = basedata;
 	assert(data);
-	assert(len > 0);
 	
-	int sending = len;
-	while (sending > 0) {
-		// send what data we have left to send.
-		int result = send(sock, data+(len-sending), sending, 0);
+	assert(data->session == NULL);
+	data->session = session;
 	
-		// TODO: Should check for blocking mode, as it may have been set.
-		// we are in blocking mode, so if we received a 0 or less, then the socket is closed.
-		if (result <= 0) {
-			close(sock);
-			sending = 0;
-			return(-1);
-		}
-		else {
-			// increase our counter of how much has been sent.  If we have sent everything, then we 
-			// will break out of the loop.
-			sending -= result;
-		}
-		assert(sending >= 0);
-	}
+	fprintf(stderr, "CONNECT CALLBACK.\n");
+	
+	// Since we are now connected, we need to send the Hello command and the other init commands.
 
-	return(0);
+	// to authenticate, we simply must provide the proper HELLO string.  
+	unsigned char hello_str[] = "RISP Server";
+	rispsession_send_str(session, CMD_HELLO, strlen((char*)hello_str), hello_str);
+	
+	// By default, the session we create will automatically receive the data of new messages being sent.
+	
+	// we then wait for some responses.
+	
+// 	assert(data->stream);
+// 	struct event_base *evbase = rispstream_get_eventbase(data->stream);
+// 	assert(evbase);
+// 	event_base_dump_events(evbase, stderr);
 }
 
 
+//--------------------------------------------------------------------------------------------------
+// Callback routine for when a session either fails to connect, or has been closed.
+//
+// Since we fully expect that we could get a failed connect when first connecting, it is possible 
+// that the session is NULL.  However, if the session is closed after the connection is established, 
+// we should have a session.   Therefore, if we had a session established, then this should be 
+// closing that.  If not, then this sesion is closing, and since it should be the only session we 
+// have, the stream processor should exit, and the app should exit.
+void close_cb(RISPSESSION session, void *basedata)
+{
+	data_t *data = basedata;
+	assert(data);
 
+	if (session == NULL) {
+		assert(data->session == NULL);
+		fprintf(stderr, "Unable to connect.\n");
+	}
+	else {
+		assert(data->session == session);
+		fprintf(stderr, "Connection closed.\n");
+	}
+	
+// 	assert(data->stream);
+// 	struct event_base *evbase = rispstream_get_eventbase(data->stream);
+// 	assert(evbase);
+// 	event_base_dump_events(evbase, stderr);
+}
 
 
 //--------------------------------------------------------------------------------------------------
-// Handle the signal.  Any signal we receive can only mean that we need to exit.
-void sig_handler(const int sig) {
-    printf("SIGINT handled.\n");
-    _sigtrap ++;
+// This callback routine is called when process has received an INT signal (normally Ctrl-C by the 
+// user).  If we are connected, we need to send a GOODBYE command to the session, and the server 
+// should then close it.
+void break_cb(RISPSTREAM stream, void *basedata)
+{
+	data_t *data = basedata;
+	assert(data);
+	assert(stream);
+	
+	assert(data->session);
+	rispsession_send_noparam(data->session, CMD_GOODBYE);
+}
+
+int passphrase_cb(RISPSTREAM stream, int maxlen, char *buffer)
+{
+	char *buf = getpass("Enter Passphrase: ");
+	strncpy(buffer, buf, maxlen);
+	return(strlen(buffer));
 }
 
 
@@ -250,13 +186,21 @@ int main(int argc, char **argv)
 	// parameters that are provided.
 	char *srv = "127.0.0.1";
 	int port = DEFAULT_PORT;
-	char *name = NULL;
-	char *message = NULL;
+	char *certfile = NULL;
+	char *keyfile = NULL;
+	data_t data;
 
+	data.stream = NULL;
+	data.session = NULL;
+	data.name = NULL;
+	data.message = NULL;
+	
 	int c;
 	while ((c = getopt(argc, argv, 
 		"s:" /* server hostname or ip */
 		"p:" /* port to connect to */
+		"c:" /* Certificate Chain */
+		"k:" /* Private Key file */
 		"n:" /* name of the message sender */
 		"m:" /* message to send */
 		"h"  /* command usage */
@@ -270,13 +214,23 @@ int main(int argc, char **argv)
 				srv = strdup(optarg);	// this will allocate some memory, but we will not be clearing it. When the application exits, it will clear by default.
 				assert(srv);
 				break;
+			case 'c':
+				assert(certfile == NULL);
+				certfile = optarg;
+				assert(certfile);
+				break;
+			case 'k':
+				assert(keyfile == NULL);
+				keyfile = optarg;
+				assert(keyfile);
+				break;
 			case 'n':
-				name = strdup(optarg);
-				assert(name);
+				data.name = strdup(optarg);
+				assert(data.name);
 				break;
 			case 'm':
-				message = strdup(optarg);
-				assert(message);
+				data.message = strdup(optarg);
+				assert(data.message);
 				break;
 			case 'h':
 				printf("Usage: ./risp_chat_send -s [server] -p [port] -n \"name of sender\" -m \"Message\"\n\n");
@@ -288,94 +242,85 @@ int main(int argc, char **argv)
 		}
 	}
 
-	// set the signal trap.
-	signal(SIGINT, sig_handler);
+	// get an initialised risp structure.
+	RISP risp = risp_init();
+	assert(risp);
+
+	// add the callback routines for the commands we are going to receive.
+	risp_add_command(risp, CMD_NOP,              cmdNop);
+	risp_add_command(risp, CMD_HELLO_ACK,        cmdHelloAck);
+
+	risp_add_invalid(risp, &cmdInvalid);
+
+	data.stream = rispstream_init(NULL);
+	assert(data.stream);
+	struct event_base *evbase = rispstream_get_eventbase(data.stream);
+	assert(evbase);
+
+// 	fprintf(stderr, "Stream created\n");
+// 	event_base_dump_events(evbase, stderr);
+
 	
-	// connect to the remote socket, and set it to non-blocking.
-	assert(srv && port > 0);
-	int handle = sock_connect(srv, port);
-	if (handle <= 0) {
-		printf("Unable to connect to %s:%d\n", srv, port);
-	}
-	else {
+	rispstream_attach_risp(data.stream, risp);
 
-// 		printf("Connected to server.\n");
-		
-		// to simplify this process, we will join all the commands together.  We will not wait for responses.
+// 	fprintf(stderr, "RISP attached.\n");
+// 	event_base_dump_events(evbase, stderr);
 
-		int len = 0;	// this var will have the length of each addition to the buffer.
-		int buflen = 0;
-		assert(message);
-		int bufmax = 1024 + strlen(message);
-		if (name) { bufmax += strlen(name); }
-		char *buffer = malloc(bufmax);
-		assert(buffer);
 	
-		// to authenticate, we simply must provide the proper HELLO string.  
-		char hello_str[] = "RISP Server";
-		len = risp_addbuf_str(buffer, CMD_HELLO, strlen(hello_str), hello_str);
-		assert(len > 0);
-		buflen += len;
-		assert(buflen <= bufmax);
+	// The stream can use the event system to trap signals, so we will use that.
+	rispstream_break_on_signal(data.stream, SIGINT, break_cb);
 
-		// set the session in NO ECHO mode.
-		len = risp_addbuf_noparam(buffer+buflen, CMD_NOECHO);
-		assert(len > 0);
-		buflen += len;
-		assert(buflen <= bufmax);
+// 	fprintf(stderr, "Signal Break added.\n");
+// 	event_base_dump_events(evbase, stderr);
 
-		// set the session in NO FOLLW mode.
-		len = risp_addbuf_noparam(buffer+buflen, CMD_NOFOLLOW);
-		assert(len > 0);
-		buflen += len;
-		assert(buflen <= bufmax);
-
-		// set the session in NO UPDATE mode.
-		len = risp_addbuf_noparam(buffer+buflen, CMD_NOUPDATE);
-		assert(len > 0);
-		buflen += len;
-		assert(buflen <= bufmax);
-
-		// if we have a 'name' specified, then set that.
-		if (name) {
-			len = risp_addbuf_str(buffer+buflen, CMD_NAME, strlen(name), name);
-			assert(len > 0);
-			buflen += len;
-			assert(buflen <= bufmax);
-		}
 	
-		// now add the message
-		assert(message);
-		len = risp_addbuf_str(buffer+buflen, CMD_MESSAGE, strlen(message), message);
-		assert(len > 0);
-		buflen += len;
-		assert(buflen <= bufmax);
-		
-		// and finally, tell the server to close the connection once it is finished.
-		len = risp_addbuf_noparam(buffer+buflen, CMD_GOODBYE);
-		assert(len > 0);
-		buflen += len;
-		assert(buflen <= bufmax);
-		
-// 		printf("Sending %d bytes to server.\n", buflen);
-		
-		// now that the we have the RISP stream created for the command, we need to send it.
-		if (sock_send(handle, buffer, buflen) != 0) {
-			// couldn't send the command, close the handle, and exit.
-			close(handle);
-			handle = -1;
+	// if the keys are encrypted, they will need the passphrase.  Ask the user for this password.
+	rispstream_set_passphrase_callback(data.stream, passphrase_cb);
+	
+	// if the user has specified to use certificates, then they needed to be loaded into the 
+	// rispstream instance.  Once certificates are applied, all client connections must also
+	// be secure.
+	if (certfile && keyfile) {
+		fprintf(stderr, "Loading Certificate and Private Keys\n");
+		int result = rispstream_add_client_certs(data.stream, certfile, keyfile);
+		if (result != 0) {
+			fprintf(stderr, "Unable to load Certificate and Private Key files.\n");
+			exit(1);
 		}
-		else {
-
-			// now we simply process the socket until it closes.  We dont actually care about processing the data received.
-			while (recv(handle, buffer, bufmax, 0) != 0) {
-// 				printf("Waiting...\n");
-			}
-		
-			close(handle);
-		}
+		assert(result == 0);
+		printf("Certificate files loaded.\n");
 	}
 
+	
+// 	event_base_dump_events(evbase, stderr);
+	
+	// Initiate a connection.  Note that it will only QUEUE the request, and will not actually attempt 
+	// the connection until the stream is being processed (rispstream_process).
+	assert(srv);
+	assert(port > 0);
+	rispstream_connect(data.stream, srv, port, &data, connect_cb, close_cb);
+
+// 	event_base_dump_events(evbase, stderr);
+	
+	// this function will process the stream (assuming the connection succeeds).  
+	// When there are no more events, it will exit.
+	// When the socket closes, this function should exit.
+	rispstream_process(data.stream);
+
+// 	event_base_dump_events(evbase, stderr);
+	
+	fprintf(stderr, "FINISHED.  SHUTTING DOWN\n");
+	
+	// Not really needed, but good to do it out of habbit before actually cleaning up the risp object itself.
+	rispstream_detach_risp(data.stream);
+	
+	// since the connect has completed, it either failed to do anything, or it connected, processing completed, 
+	// and the socket was closed.  So now we shutdown the stream.
+	rispstream_shutdown(data.stream);
+
+	// clean up the risp structure.
+	risp_shutdown(risp);
+	risp = NULL;
 	
 	return 0;
 }

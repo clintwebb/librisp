@@ -198,7 +198,7 @@ void connect_cb(RISPSESSION session, void *basedata)
 //--------------------------------------------------------------------------------------------------
 // Callback routine for when a session either fails to connect, or has been closed.
 //
-// Ssince we fully expect that we could get a failed connect when first connecting, it is possible 
+// Since we fully expect that we could get a failed connect when first connecting, it is possible 
 // that the session is NULL.  However, if the session is closed after the connection is established, 
 // we should have a session.   Therefore, if we had a session established, then this should be 
 // closing that.  If not, then this sesion is closing, and since it should be the only session we 
@@ -235,12 +235,23 @@ void break_cb(RISPSTREAM stream, void *basedata)
 }
 
 
+int passphrase_cb(RISPSTREAM stream, int maxlen, char *buffer)
+{
+	char *buf = getpass("Enter Passphrase: ");
+	strncpy(buffer, buf, maxlen);
+	return(strlen(buffer));
+}
+
+
 
 int main(int argc, char **argv)
 {
 	// parameters that are provided.
 	char *srv = "127.0.0.1";
 	int port = DEFAULT_PORT;
+	char *cafile = NULL;
+	char *keyfile = NULL;
+	int force_enc = 0;
 
 	// this data object will be passed to all the callback routines.  Initialise it.
 	data_t data;
@@ -255,6 +266,9 @@ int main(int argc, char **argv)
 	while (-1 != (c = getopt(argc, argv, 
 			"p:" /* port */
 			"s:" /* Server host */
+			"e"  /* use encryption for the connection. */
+			"c:" /* Certificate Chain */
+			"k:" /* Private Key file */
 			"h"  /* help */ 
 		))) {
 		switch (c) {
@@ -266,13 +280,24 @@ int main(int argc, char **argv)
 				srv = strdup(optarg);
 				assert(srv != NULL);
 				break;				
+			case 'c':
+				assert(cafile == NULL);
+				cafile = optarg;
+				assert(cafile);
+				break;
+			case 'k':
+				assert(keyfile == NULL);
+				keyfile = optarg;
+				assert(keyfile);
+				break;
+			case 'e':
+				force_enc =  1;
+				break;
 			case 'h':
-				printf("usage:\n\nrisp_chat_stream [-s server] [-p port] [-h]\n");
+			default:
+				printf("usage:\n\nrisp_chat_stream [-s server] [-p port] [-e] [-c cafile] [-k keyfile] [-h]\n");
 				exit(1);
 				break;
-			default:
-				fprintf(stderr, "Illegal argument \"%c\"\n", c);
-				return 1;
 		}
 	}
 
@@ -281,12 +306,12 @@ int main(int argc, char **argv)
 	assert(risp);
 
 	// add the callback routines for the commands we are going to receive.
-	risp_add_command(risp, CMD_NOP,              &cmdNop);
-	risp_add_command(risp, CMD_HELLO_ACK,        &cmdHelloAck);
-	risp_add_command(risp, CMD_MSG_ID,           &cmdMsgID);
-	risp_add_command(risp, CMD_LATEST_MSG_ID,    &cmdLatestMsgID);
-	risp_add_command(risp, CMD_NAME,             &cmdName);
-	risp_add_command(risp, CMD_MESSAGE,          &cmdMessage);
+	risp_add_command(risp, CMD_NOP,              cmdNop);
+	risp_add_command(risp, CMD_HELLO_ACK,        cmdHelloAck);
+	risp_add_command(risp, CMD_MSG_ID,           cmdMsgID);
+	risp_add_command(risp, CMD_LATEST_MSG_ID,    cmdLatestMsgID);
+	risp_add_command(risp, CMD_NAME,             cmdName);
+	risp_add_command(risp, CMD_MESSAGE,          cmdMessage);
 
 	risp_add_invalid(risp, &cmdInvalid);
 
@@ -298,14 +323,34 @@ int main(int argc, char **argv)
 	// The stream can use the event system to trap signals, so we will use that.
 	rispstream_break_on_signal(data.stream, SIGINT, break_cb);
 	
+	// if we are using encryption, pass the details on to rispstream.  Note that this setting 
+	// is used to connect using SSL, but doesn't necessarily imply that client-certs are required.
+	if (force_enc > 0) {
+		rispstream_use_ssl(data.stream);
+	}
+
+	// if the keys are encrypted, they will need the passphrase.  Ask the user for this password.
+	rispstream_set_passphrase_callback(data.stream, passphrase_cb);
+	
+	// if the user has specified to use certificates, then they needed to be loaded into the 
+	// rispstream instance.  Once certificates are applied, all client connections must also
+	// be secure.
+	if (cafile && keyfile) {
+		fprintf(stderr, "Loading Certificate and Private Keys\n");
+		int result = rispstream_add_client_certs(data.stream, cafile, keyfile);
+		if (result != 0) {
+			fprintf(stderr, "Unable to load Certificate and Private Key files.\n");
+			exit(1);
+		}
+		assert(result == 0);
+		printf("Certificate files loaded.\n");
+	}
+	
 	// Initiate a connection.  Note that it will only QUEUE the request, and will not actually attempt 
 	// the connection until the stream is being processed (rispstream_process).
 	assert(srv);
 	assert(port > 0);
-	char *connstr = malloc(4096);
-	sprintf(connstr, "%s:%d", srv, port);
-	rispstream_connect(data.stream, connstr, &data, connect_cb, close_cb);
-	free(connstr); connstr = NULL;
+	rispstream_connect(data.stream, srv, port, &data, connect_cb, close_cb);
 
 	// this function will process the stream (assuming the connection succeeds).  
 	// When there are no more events, it will exit.

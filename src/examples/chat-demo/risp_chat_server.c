@@ -131,6 +131,8 @@ void usage(void) {
 	printf(PACKAGE " " VERSION "\n");
 	printf("-p <num>      TCP port to listen on (default: %d)\n", DEFAULT_PORT);
 	printf("-l <ip_addr>  interface to listen on, default is INADDR_ANY\n"
+			"-c <file>     PEM file containing the Certificate Authority Chain, including Client Certificate.\n"
+			"-k <file>     PEM Private Key used for Client connection."
 			"-v            verbose (print errors/warnings while in event loop)\n"
 			"-vv           very verbose (also print client commands/reponses)\n"
 			"-h            print this help and exit\n"
@@ -818,7 +820,9 @@ void newconn_cb(RISPSESSION streamsession, void *dataptr)
 	assert(dataptr);
 	maindata_t *maindata = dataptr;
 	assert(maindata);
-		
+
+	fprintf(stderr, "Newconn\n");
+	
 	// this will create the session and manage it however we need to manage it.
 	session_t *session = session_new(maindata, streamsession);
 	assert(session);
@@ -893,6 +897,8 @@ maindata_t * maindata_init(void)
 int main(int argc, char **argv) 
 {
 	char *interface = "0.0.0.0";
+	char *cafile = NULL;
+	char *keyfile = NULL;
 	int port = DEFAULT_PORT;
 	bool verbose = false;
 
@@ -904,11 +910,14 @@ int main(int argc, char **argv)
 	while ((c = getopt(argc, argv, 
 		"l:" /* listening interface (IP) */
 		"p:" /* port to listen on */
+		"c:" /* Certificate Chain */
+		"k:" /* Private Key file */
 		"h"  /* help... show usage info */
 		"v"  /* verbosity */
 	)) != -1) {
 		switch (c) {
 			case 'p':
+				assert(optarg);
 				port = atoi(optarg);
 				assert(port > 0);
 				break;
@@ -920,15 +929,25 @@ int main(int argc, char **argv)
 				break;
 			case 'l':
 				interface = optarg;
+				assert(interface);
 				break;
-				
+			case 'c':
+				assert(cafile == NULL);
+				cafile = optarg;
+				assert(cafile);
+				break;
+			case 'k':
+				assert(keyfile == NULL);
+				keyfile = optarg;
+				assert(keyfile);
+				break;
 			default:
 				fprintf(stderr, "Illegal argument \"%c\"\n", c);
 				return 1;
 		}
 	}
 
-	if (verbose) printf("Finished processing command-line args\n");
+	if (verbose) fprintf(stderr, "Finished processing command-line args\n");
 
 	// initialise the rispstream.  We dont pass any parameters in, we build up functionality after.
 	RISPSTREAM stream = rispstream_init(NULL);
@@ -968,6 +987,20 @@ int main(int argc, char **argv)
 	maindata_t *data = maindata_init();
 	assert(data);
 	rispstream_set_userdata(stream, data);
+
+	// if the user has specified to use certificates, then they needed to be loaded into the 
+	// rispstream instance.  Once certificates are applied, all client connections must also
+	// be secure.
+	if (cafile && keyfile) {
+		if (verbose > 1) { fprintf(stderr, "Loading Certificate and Private Keys\n"); }
+		int result = rispstream_add_server_certs(stream, cafile, keyfile);
+		if (result != 0) {
+			fprintf(stderr, "Unable to load Certificate and Private Key files.\n");
+			exit(1);
+		}
+		assert(result == 0);
+		if (verbose) { printf("Certificate files loaded.\n"); }
+	}
 	
 	// When the user presses Ctrl-C, we want the service to exit (cleanly).  
 	// We can tell rispstream to handle that (since the stream will be handling libevent).  
@@ -982,11 +1015,7 @@ int main(int argc, char **argv)
 	// That object will be passed to the risp callback routines when commands are received.  
 	// It essentially allows you to have some data specific to that session.
 	assert(stream);
-	char *connstr=malloc(4096);
-	assert(connstr);
-	sprintf(connstr, "%s:%d", interface, port);
-	rispstream_listen(stream, connstr, newconn_cb, connclosed_cb);
-	free(connstr); connstr = NULL;
+	rispstream_listen(stream, interface, port, newconn_cb, connclosed_cb);
 
 	// Now that the listen socket and event is created, we need to process the streams that result.  
 	// This function will continue to run until one of the callbacks tells rispstream to shutdown.   
@@ -1010,7 +1039,7 @@ int main(int argc, char **argv)
 	risp_shutdown(risp);
 	risp = NULL;
     
-	if (verbose) printf("\n\nExiting.\n");
+	if (verbose) fprintf(stderr, "\n\nExiting.\n");
 
 	return 0;
 }

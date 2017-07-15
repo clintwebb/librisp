@@ -30,8 +30,9 @@
 #include <risp.h>
 
 
-#if (RISP_VERSION < 0x00040000)
-  #error "RISP Library version must be at least 4.00 or greater"
+#if (RISP_VERSION < 0x00040200)
+  #error "RISP Library version must be at least 4.02.00 or greater"
+  // v4.02.00 is reqired for the risp_version() and risp_needs() functions.
 #endif
 
 ///////////////////////////////////////////
@@ -43,10 +44,13 @@ typedef void * RISPSESSION;
 // Callback types
 typedef void (*risp_cb_idle)(RISPSTREAM, void *);
 typedef void (*risp_cb_break)(RISPSTREAM, void *); 
+typedef int  (*risp_cb_passphrase)(RISPSTREAM, int maxlen, char *buffer);
 
 typedef void (*risp_cb_newconn)(RISPSESSION, void *);
+typedef void (*risp_cb_newconn_secure)(RISPSESSION, void *);
 typedef void (*risp_cb_connclosed)(RISPSESSION, void *);
 typedef void (*risp_cb_timeout)(RISPSESSION, void *);
+typedef int  (*risp_cb_passphrase)(RISPSTREAM, int maxlen, char *buffer);
 
 ///////////////////////////////////////////
 // declare the public functions.
@@ -55,8 +59,14 @@ typedef void (*risp_cb_timeout)(RISPSESSION, void *);
 extern RISPSTREAM rispstream_init(struct event_base *base);
 extern void rispstream_init_events(RISPSTREAM streamptr);
 extern void rispstream_shutdown(RISPSTREAM stream);
-extern int  rispstream_listen(RISPSTREAM stream, char *interface, risp_cb_newconn newconn_fn, risp_cb_connclosed connclosed_fn);
-extern int  rispstream_connect(RISPSTREAM stream, char *host, void *basedata, risp_cb_newconn newconn_fn, risp_cb_connclosed connclosed_fn);
+
+extern int  rispstream_listen(RISPSTREAM stream, char *host, int port, risp_cb_newconn newconn_fn, risp_cb_connclosed connclosed_fn);
+extern int  rispstream_connect(RISPSTREAM stream, char *host, int port, void *basedata, risp_cb_newconn newconn_fn, risp_cb_connclosed connclosed_fn);
+
+extern int  rispstream_listen_secure(RISPSTREAM stream, char *interface, risp_cb_newconn_secure secnewconn_fn, risp_cb_connclosed connclosed_fn);
+// extern int  rispstream_connect_secure(RISPSTREAM stream, char *host, int port, void *basedata, risp_cb_newconn newconn_fn, risp_cb_connclosed connclosed_fn);
+
+
 extern void rispstream_process(RISPSTREAM stream);
 extern void rispstream_stop_listen(RISPSTREAM stream);
 extern void rispstream_attach_risp(RISPSTREAM stream, RISP risp);
@@ -67,6 +77,13 @@ extern void rispstream_break_on_signal(RISPSTREAM stream, int sig, risp_cb_break
 extern void rispstream_set_userdata(RISPSTREAM stream, void *data);
 extern void *rispstream_get_userdata(RISPSTREAM stream);
 
+// add a certificate authority.  Can be used by server (which will also need a pkey to be added as well)
+extern void rispstream_use_ssl(RISPSTREAM stream);
+extern int rispstream_add_server_certs(RISPSTREAM stream, char *ca_pem_file, char *ca_pkey_file);
+extern int rispstream_add_client_certs(RISPSTREAM stream, char *ca_pem_file, char *ca_pkey_file);
+extern void rispstream_set_passphrase_callback(RISPSTREAM stream, risp_cb_passphrase passphrase_fn);
+
+extern struct event_base * rispstream_get_eventbase(RISPSTREAM stream);
 
 
 ///////////////////////////////////////////
