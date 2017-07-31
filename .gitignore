@@ -14,3 +14,13 @@ src/examples/chat-demo/risp_chat_send
 src/examples/chat-demo/risp_chat_server
 src/examples/chat-demo/risp_chat_stream
 src/examples/chat-demo/risp_chat_stream2
+src/examples/chat-demo/ssl/*.pem
+src/examples/chat-demo/ssl/int-crlnumber
+src/examples/chat-demo/ssl/int-index.*
+src/examples/chat-demo/ssl/int-serial
+src/examples/chat-demo/ssl/int-serial.old
+src/examples/chat-demo/ssl/root-crlnumber
+src/examples/chat-demo/ssl/root-index.*
+src/examples/chat-demo/ssl/root-serial
+src/examples/chat-demo/ssl/root-serial.old
+
