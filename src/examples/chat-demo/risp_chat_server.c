@@ -22,6 +22,7 @@
 
 // includes
 #include <assert.h>			// assert
+#include <getopt.h>
 #include <signal.h>
 #include <stdio.h>			// perror, printf
 #include <stdlib.h>
@@ -52,7 +53,7 @@
 
 
 
-// Stored information abou each message.  
+// Stored information about each message.  
 typedef struct {
 	long long msgID;
 	unsigned char *name;
@@ -124,18 +125,17 @@ typedef struct {
 
 
 
-
 //--------------------------------------------------------------------------------------------------
 // print some info to the user, so that they can know what the parameters do.
 void usage(void) {
 	printf(PACKAGE " " VERSION "\n");
-	printf("-p <num>      TCP port to listen on (default: %d)\n", DEFAULT_PORT);
-	printf("-l <ip_addr>  interface to listen on, default is INADDR_ANY\n"
-			"-c <file>     PEM file containing the Certificate Authority Chain, including Client Certificate.\n"
-			"-k <file>     PEM Private Key used for Client connection."
-			"-v            verbose (print errors/warnings while in event loop)\n"
-			"-vv           very verbose (also print client commands/reponses)\n"
-			"-h            print this help and exit\n"
+	printf(	"   --port <num>\n"
+			"   --interface <ip_addr>\n"
+			"   --client-ca <file>\n"
+			"   --cert <file>\n"
+			"   --key <file>\n"
+			"   --verbose\n"
+			"   --help\n"
 			);
 	
 	return;
@@ -898,6 +898,7 @@ int main(int argc, char **argv)
 {
 	char *interface = "0.0.0.0";
 	char *cafile = NULL;
+	char *certfile = NULL;
 	char *keyfile = NULL;
 	int port = DEFAULT_PORT;
 	bool verbose = false;
@@ -905,27 +906,48 @@ int main(int argc, char **argv)
 	// set stderr non-buffering (for running under, say, daemontools)
 	setbuf(stderr, NULL);
 
-	// process command-line arguments 
-	int c;
-	while ((c = getopt(argc, argv, 
-		"l:" /* listening interface (IP) */
-		"p:" /* port to listen on */
-		"c:" /* Certificate Chain */
-		"k:" /* Private Key file */
-		"h"  /* help... show usage info */
-		"v"  /* verbosity */
-	)) != -1) {
+	while (1) {
+		int option_index = 0;
+		static struct option long_options[] = {
+			{"interface", required_argument, 0,  'l' },
+			{"port",      required_argument, 0,  'p' },
+			{"client-ca", required_argument, 0,  'c' },
+			{"cert",      required_argument, 0,  's' },
+			{"key",       required_argument, 0,  'k' },
+			{"help",      no_argument,       0,  'h' },
+			{"verbose",   no_argument,       0,  'v' },
+			{0,           0,                 0,  0 }
+		};
+
+		int c = getopt_long(argc, argv,
+			"l:" /* listening interface (IP) */
+			"p:" /* port to listen on */
+			"c:" /* Client Certificate Chain */
+			"s:" /* Server Certificate */
+			"k:" /* Private Key file for Server Certificate */
+			"h"  /* help... show usage info */
+			"v"  /* verbosity */
+			, long_options, &option_index);
+		if (c == -1)
+			break;
+
 		switch (c) {
-			case 'p':
-				assert(optarg);
-				port = atoi(optarg);
-				assert(port > 0);
+			case 0:
+				printf("Unknown option %s", long_options[option_index].name);
+				if (optarg)
+					printf(" with arg %s", optarg);
+				printf("\n");
 				break;
 			case 'h':
 				usage();
 				exit(EXIT_SUCCESS);
 			case 'v':
 				verbose++;
+				break;
+			case 'p':
+				assert(optarg);
+				port = atoi(optarg);
+				assert(port > 0);
 				break;
 			case 'l':
 				interface = optarg;
@@ -936,6 +958,10 @@ int main(int argc, char **argv)
 				cafile = optarg;
 				assert(cafile);
 				break;
+			case 's':
+				assert(certfile == NULL);
+				certfile = optarg;
+				assert(certfile);
 			case 'k':
 				assert(keyfile == NULL);
 				keyfile = optarg;
@@ -946,6 +972,12 @@ int main(int argc, char **argv)
 				return 1;
 		}
 	}
+
+	if (verbose > 1) { printf("Interface: %s\n", interface); }
+	if (verbose > 1) { printf("Listening Port: %d\n", port); }
+	if (verbose > 1) { printf("CA File: %s\n", cafile); }
+	if (verbose > 1) { printf("Cert File: %s\n", certfile); }
+	if (verbose > 1) { printf("Key File: %s\n", keyfile); }
 
 	if (verbose) fprintf(stderr, "Finished processing command-line args\n");
 
