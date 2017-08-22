@@ -1,0 +1,2 @@
+This feature is to add functionality to allow a listening server to use the client certificate details as authentication from client connections.
+
