@@ -20,6 +20,7 @@
 
 #include "rispstream.h"
 
+#include <arpa/inet.h>
 #include <assert.h>
 #include <ctype.h>
 #include <errno.h>
@@ -78,8 +79,8 @@ typedef struct {
 	
 	SSL *client_ssl;
 
-	risp_cb_newconn newconn_fn;
-	risp_cb_connclosed connclosed_fn;
+// 	risp_cb_newconn newconn_fn;
+// 	risp_cb_connclosed connclosed_fn;
 	
 	void *usersession;
 	
@@ -240,9 +241,9 @@ static void session_close(session_t *session)
 	stream_t *stream = session->stream;
 
 	// if a callback was specified, then we need to let the initiator know that a session has been closed.
-	if (stream->connclosed_callback_fn) {
-		(*stream->connclosed_callback_fn)(session, stream->userdata);
-	}
+// 	if (stream->connclosed_callback_fn) {
+// 		(*stream->connclosed_callback_fn)(session, stream->userdata);
+// 	}
 	
 	// Now that the session itself has been cleaned up, we need to do some work on the 
 	// list of sessions that is kept in the main stream object.
@@ -433,28 +434,34 @@ void session_buffer_handler(struct bufferevent *bev, short events, void *ptr)
 	assert(bev);
 	assert(events != 0);
 
+	stream_t *stream = session->stream;
+	assert(stream);
+
     if (events & BEV_EVENT_CONNECTED) {
 		// we have successfully connected.
 		assert(session->bev == NULL || session->bev == bev);
 		if (session->bev == NULL) { 
-			session->bev == bev; 
+			session->bev = bev; 
 			
 			// Need to set the watermark for the minimum data needed (2 bytes).  
 			// Once 2 bytes have been read, we will know how much more data we need for the command, so we can then set a new watermark.
 			session->buffwait = 2;
 			bufferevent_setwatermark(session->bev, EV_READ, session->buffwait, 0);
 		}
+		
 		fprintf(stderr, "Connection received.\n");
-		if (session->newconn_fn) {
-			// a callback was specified so we call it.
-			(*session->newconn_fn)(session, session->usersession);
+		assert(stream);
+		if (stream->newconn_callback_fn) {
+			assert(session->usersession == NULL);
+			(*stream->newconn_callback_fn)(session, stream->userdata);
 		}
     } 
     else if (events & (BEV_EVENT_ERROR|BEV_EVENT_EOF)) {
 		fprintf(stderr, "SESSION CLOSED\n");
 		assert(session->bev == bev);
-		if (session->connclosed_fn) {
-			(*session->connclosed_fn)(session, session->usersession);
+		assert(stream);
+		if (stream->connclosed_callback_fn) {
+			(*stream->connclosed_callback_fn)(session, stream->userdata);
 			session_close(session);
 		}
     }
@@ -482,18 +489,16 @@ static session_t * session_new(stream_t *stream, int handle)
 	session->stream = stream;
 	session->closing = 0;
 	session->close_event = NULL;
-	session->newconn_fn = NULL;
-	session->connclosed_fn = NULL;
 	session->bev = NULL;
 	session->buffwait = 2;
 	
 	// if the stream is setup to use certificates, then this session will need to be also.
-	assert(stream->use_ssl == 0 || (stream->use_ssl == 1 && stream->server_ctx));
 	if (stream->server_ctx) {
 		session->client_ssl = SSL_new(stream->server_ctx);
 		assert(session->client_ssl);
 	}
 	else {
+		assert(stream->use_ssl == 0);
 		session->client_ssl = NULL;
 	}
 	
@@ -570,12 +575,28 @@ static session_t * session_new(stream_t *stream, int handle)
 	// at the end of this, we should have added our new session to an empty slot in the array.  
 	// If the array had no empty slots (after the next_session_slot), then it would have increased the size of the array.
 
-	if (stream->newconn_callback_fn) {
-		assert(session->usersession == NULL);
-		(*stream->newconn_callback_fn)(session, stream->userdata);
-	}
-	
 	return(session);
+}
+
+
+char * rispsession_get_session_auth_certname(RISPSESSION sessionptr)
+{
+	session_t *session = sessionptr;
+	assert(session);
+
+	char *certname = NULL;
+
+	assert(session->client_ssl);
+	X509 *cert = SSL_get_peer_certificate(session->client_ssl);
+	if (cert) {
+		assert(cert);
+		// we have the cert.  Now we need to get the name from it.
+
+		// TODO: X509_NAME_oneline is deprecated and should be replaced with something else.
+		certname = X509_NAME_oneline(X509_get_subject_name(cert), NULL, 0);
+	}
+
+	return(certname);
 }
 
 
@@ -603,16 +624,16 @@ int rispstream_connect(RISPSTREAM streamptr, char *host, int port, void *basedat
 
 		// if there isn't already a libevent_base already set, then we should do one now.
 		if (stream->main_event_base == NULL) { rispstream_init_events(streamptr); }
-		
+
+		stream->newconn_callback_fn = newconn_fn;
+		stream->connclosed_callback_fn = connclosed_fn; 			
+
 		// create a new session (passing in -1 as a handle, so that it doesn't setup all the events)
 		session_t *session = session_new(streamptr, -1);
 		assert(session);
 
-		assert(session->usersession == NULL);
-		session->usersession = basedata;
-			
-		session->newconn_fn = newconn_fn;
-		session->connclosed_fn = connclosed_fn; 			
+		assert(stream->userdata == NULL);
+		stream->userdata = basedata;
 
 		session->buffwait = 2;
 
@@ -688,7 +709,13 @@ static void listen_event_handler(
 	assert(stream->sverify == STRUCT_VERIFIER);
 
 	// TODO: at this point, we are not passing on the address information... however, we will want to do so at some point.
-	fprintf(stderr, "New connection received.\n");
+	assert(address);
+	assert(address->sa_family == AF_INET);
+	char addr[INET_ADDRSTRLEN];
+	addr[0] = 0;
+	struct sockaddr_in *sin = (struct sockaddr_in *) address;
+	inet_ntop(AF_INET, &(sin->sin_addr), addr, INET_ADDRSTRLEN);
+	fprintf(stderr, "New connection received (%s). \n", addr);
 	
 	// Create the session object.
 	session_t *session = session_new(stream, fd);
@@ -1071,13 +1098,10 @@ int cert_passphrase_cb(char *buf, int size, int rwflag, void *userdata)
 // User is adding the required cert data needed for a listening service.  CA file should also contain CA's for client-cert authentication if that is used.
 // Returns: 0 - on success.  ca and pkey were loaded successfully.
 //          -1 - failure.  either the files didn't exist, were in the wrong format, or didn't match.
-int rispstream_add_server_certs(RISPSTREAM streamptr, char *ca_pem_file, char *ca_pkey_file)
+int rispstream_add_server_certs(RISPSTREAM streamptr, const char *ca_file, const char *cert_file, const char *key_file)
 {
 	stream_t *stream = streamptr;
 	assert(stream);
-	
-	assert(ca_pem_file);
-	assert(ca_pkey_file);
 	
 	assert(stream->server_ctx == NULL);
 
@@ -1091,13 +1115,27 @@ int rispstream_add_server_certs(RISPSTREAM streamptr, char *ca_pem_file, char *c
 	stream->server_ctx = SSL_CTX_new(SSLv23_server_method());
 	assert(stream->server_ctx);
 
-	// if the client certificate has a passphrase (meaning that the private key is encrypted), then a callback routine will be called asking for the passphrase.   If a passphrase hasn't been stored for this stream, then we will need to ask the user for it.
+	// if the client certificate has a passphrase (meaning that the private key is encrypted), 
+	// then a callback routine will be called asking for the passphrase.   
+	// If a passphrase hasn't been stored for this stream, then we will need to ask the user for it.
 	SSL_CTX_set_default_passwd_cb(stream->server_ctx, cert_passphrase_cb);
 	SSL_CTX_set_default_passwd_cb_userdata(stream->server_ctx, stream);
 
+	// if there is a CA provided, then we must load that first.
+	if (ca_file) {
+		assert(stream->server_ctx);
+		if (SSL_CTX_load_verify_locations(stream->server_ctx, ca_file, NULL) == 1) {
+			// successful
+		}
+		else {
+			return(-1);
+		}
+	}
 	
-	if (! SSL_CTX_use_certificate_chain_file(stream->server_ctx, ca_pem_file) ||
-		! SSL_CTX_use_PrivateKey_file(stream->server_ctx, ca_pkey_file, SSL_FILETYPE_PEM)) {
+	assert(cert_file);
+	assert(key_file);
+	if (! SSL_CTX_use_certificate_chain_file(stream->server_ctx, cert_file) ||
+		! SSL_CTX_use_PrivateKey_file(stream->server_ctx, key_file, SSL_FILETYPE_PEM)) {
 		stream->server_ctx = NULL;
 	}
 	else {
@@ -1109,16 +1147,35 @@ int rispstream_add_server_certs(RISPSTREAM streamptr, char *ca_pem_file, char *c
 }
 
 
-// User is adding the required cert data needed for connecting.
-// Returns: 0 - on success.  ca and pkey were loaded successfully.
-//          -1 - failure.  either the files didn't exist, were in the wrong format, or didn't match.
-int rispstream_add_client_certs(RISPSTREAM streamptr, char *ca_pem_file, char *ca_pkey_file)
+int callback_ssl_verify(int preverify_ok, X509_STORE_CTX *x509_ctx)
+{
+	fprintf(stderr, "VERIFY CALLBACK: preverify=%d\n", preverify_ok);
+	return(1); // 1 indicated that normal internal verification is to continue.
+}
+
+
+// returns 0 if it was able to load the CA file.
+// returns -1 if there was a problem loading the CA file.
+extern void rispstream_require_client_certs(RISPSTREAM streamptr, const char *ca_pem_file)
 {
 	stream_t *stream = streamptr;
 	assert(stream);
-
+	
+	assert(stream->server_ctx);
+	assert(stream->client_ctx == NULL);
 	assert(ca_pem_file);
-	assert(ca_pkey_file);
+	SSL_CTX_set_client_CA_list(stream->server_ctx, SSL_load_client_CA_file(ca_pem_file));
+	SSL_CTX_set_verify(stream->server_ctx, SSL_VERIFY_PEER, callback_ssl_verify);
+}
+
+
+// User is adding the required cert data needed for connecting.
+// Returns: 0 - on success.  ca and pkey were loaded successfully.
+//          -1 - failure.  either the files didn't exist, were in the wrong format, or didn't match.
+int rispstream_add_client_certs(RISPSTREAM streamptr, const char *ca_file, const char *cert_file, const char *key_file)
+{
+	stream_t *stream = streamptr;
+	assert(stream);
 
 	assert(stream->client_ctx == NULL);
 
@@ -1137,10 +1194,12 @@ int rispstream_add_client_certs(RISPSTREAM streamptr, char *ca_pem_file, char *c
 	SSL_CTX_set_default_passwd_cb(stream->client_ctx, cert_passphrase_cb);
 	SSL_CTX_set_default_passwd_cb_userdata(stream->client_ctx, stream);
 
+	assert(cert_file);
+	assert(key_file);
 	
-	int rc = SSL_CTX_use_certificate_file(stream->client_ctx, ca_pem_file, SSL_FILETYPE_PEM);
+	int rc = SSL_CTX_use_certificate_file(stream->client_ctx, cert_file, SSL_FILETYPE_PEM);
 	if (rc == 1) {
-		rc = SSL_CTX_use_PrivateKey_file(stream->client_ctx, ca_pkey_file, SSL_FILETYPE_PEM);
+		rc = SSL_CTX_use_PrivateKey_file(stream->client_ctx, key_file, SSL_FILETYPE_PEM);
 		if (rc != 1) {
 			stream->client_ctx = NULL;
 		}
@@ -1149,6 +1208,9 @@ int rispstream_add_client_certs(RISPSTREAM streamptr, char *ca_pem_file, char *c
 	// return 0 if the context was created, otherwise a 1.
 	return stream->client_ctx ? 0 : -1;
 }
+
+
+
 
 
 extern struct event_base * rispstream_get_eventbase(RISPSTREAM streamptr)
