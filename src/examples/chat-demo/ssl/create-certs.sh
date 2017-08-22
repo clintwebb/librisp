@@ -56,7 +56,7 @@ INT_CA_CERT=int-ca.cert.pem
 INT_CA_CSR=int-ca.csr.pem
 
 echo "Creating Intermediate CA signed by the root.  This will be used to sign the client and server certificate requests."
-echo.
+echo
 
 echo;echo "Creating Intermediate Key."
 test -e $INT_CA_KEY || openssl genrsa -aes256 -out $INT_CA_KEY 4096
@@ -76,8 +76,8 @@ openssl verify -CAfile $ROOT_CA_CERT $INT_CA_CERT
 
 echo "Creating Certificate Chain FIle"
 chmod 644 ca-chain.cert.pem
-cat $ROOT_CA_CERT > ca-chain.cert.pem
-cat $INT_CA_CERT >> ca-chain.cert.pem
+cat $INT_CA_CERT > ca-chain.cert.pem
+cat $ROOT_CA_CERT >> ca-chain.cert.pem
 chmod 444 ca-chain.cert.pem
 
 echo "Creating Server cert key"

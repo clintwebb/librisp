@@ -1,0 +1,1 @@
+/C=AU/ST=Western Australia/O=RISP CHAT EXAMPLE/CN=client@risp.com
