@@ -112,6 +112,9 @@ void connect_cb(RISPSESSION session, void *basedata)
 	data->session = session;
 	
 	fprintf(stderr, "CONNECT CALLBACK.\n");
+
+	// we will use the same basedata for this one.  We dont have any session tracking data.
+	rispsession_set_userdata(session, basedata);
 	
 	// Since we are now connected, we need to send the Hello command and the other init commands.
 
@@ -186,6 +189,7 @@ int main(int argc, char **argv)
 	// parameters that are provided.
 	char *srv = "127.0.0.1";
 	int port = DEFAULT_PORT;
+	char *cafile = NULL;
 	char *certfile = NULL;
 	char *keyfile = NULL;
 	data_t data;
@@ -199,6 +203,7 @@ int main(int argc, char **argv)
 	while ((c = getopt(argc, argv, 
 		"s:" /* server hostname or ip */
 		"p:" /* port to connect to */
+		"a:" /* CA file */
 		"c:" /* Certificate Chain */
 		"k:" /* Private Key file */
 		"n:" /* name of the message sender */
@@ -211,8 +216,13 @@ int main(int argc, char **argv)
 				assert(port > 0);
 				break;
 			case 's':
-				srv = strdup(optarg);	// this will allocate some memory, but we will not be clearing it. When the application exits, it will clear by default.
+				srv = strdup(optarg);
 				assert(srv);
+				break;
+			case 'a':
+				assert(cafile == NULL);
+				cafile = optarg;
+				assert(cafile);
 				break;
 			case 'c':
 				assert(certfile == NULL);
@@ -250,39 +260,32 @@ int main(int argc, char **argv)
 	risp_add_command(risp, CMD_NOP,              cmdNop);
 	risp_add_command(risp, CMD_HELLO_ACK,        cmdHelloAck);
 
+	// add a handler to let us know if we receive a command we aren't expecting.
 	risp_add_invalid(risp, &cmdInvalid);
 
+	// initialise the RISP stream library.  This will also initialise libevent (which we verify with an assert).  
 	data.stream = rispstream_init(NULL);
 	assert(data.stream);
 	struct event_base *evbase = rispstream_get_eventbase(data.stream);
 	assert(evbase);
 
-// 	fprintf(stderr, "Stream created\n");
-// 	event_base_dump_events(evbase, stderr);
-
-	
+	// Attach our RISP handlers to the stream.
 	rispstream_attach_risp(data.stream, risp);
 
-// 	fprintf(stderr, "RISP attached.\n");
-// 	event_base_dump_events(evbase, stderr);
-
-	
 	// The stream can use the event system to trap signals, so we will use that.
 	rispstream_break_on_signal(data.stream, SIGINT, break_cb);
 
-// 	fprintf(stderr, "Signal Break added.\n");
-// 	event_base_dump_events(evbase, stderr);
-
-	
-	// if the keys are encrypted, they will need the passphrase.  Ask the user for this password.
-	rispstream_set_passphrase_callback(data.stream, passphrase_cb);
+	// if the keys are encrypted, they will need the passphrase.  Set a callback routine to Ask the user for this password.
+	if (keyfile) {
+		rispstream_set_passphrase_callback(data.stream, passphrase_cb);
+	}
 	
 	// if the user has specified to use certificates, then they needed to be loaded into the 
 	// rispstream instance.  Once certificates are applied, all client connections must also
 	// be secure.
 	if (certfile && keyfile) {
 		fprintf(stderr, "Loading Certificate and Private Keys\n");
-		int result = rispstream_add_client_certs(data.stream, certfile, keyfile);
+		int result = rispstream_add_client_certs(data.stream, cafile, certfile, keyfile);
 		if (result != 0) {
 			fprintf(stderr, "Unable to load Certificate and Private Key files.\n");
 			exit(1);
@@ -291,24 +294,16 @@ int main(int argc, char **argv)
 		printf("Certificate files loaded.\n");
 	}
 
-	
-// 	event_base_dump_events(evbase, stderr);
-	
 	// Initiate a connection.  Note that it will only QUEUE the request, and will not actually attempt 
 	// the connection until the stream is being processed (rispstream_process).
 	assert(srv);
 	assert(port > 0);
 	rispstream_connect(data.stream, srv, port, &data, connect_cb, close_cb);
-
-// 	event_base_dump_events(evbase, stderr);
 	
 	// this function will process the stream (assuming the connection succeeds).  
 	// When there are no more events, it will exit.
 	// When the socket closes, this function should exit.
-	rispstream_process(data.stream);
-
-// 	event_base_dump_events(evbase, stderr);
-	
+	rispstream_process(data.stream);	
 	fprintf(stderr, "FINISHED.  SHUTTING DOWN\n");
 	
 	// Not really needed, but good to do it out of habbit before actually cleaning up the risp object itself.
@@ -324,5 +319,4 @@ int main(int argc, char **argv)
 	
 	return 0;
 }
-
 

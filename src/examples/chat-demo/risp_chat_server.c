@@ -81,6 +81,7 @@ typedef struct {
 	struct {
 		char name[256+1];
 		bool authenticated;
+		bool established;
 		bool echo;
 		bool follow;
 		bool update;
@@ -113,6 +114,9 @@ typedef struct {
 		message_t **list;
 		int latest;
 	} messages;
+	
+	char **users;
+	int verify;
 
 } maindata_t;  // see maindata_init()
 
@@ -134,6 +138,7 @@ void usage(void) {
 			"   --client-ca <file>\n"
 			"   --cert <file>\n"
 			"   --key <file>\n"
+			"   --userfile <file>\n"
 			"   --verbose\n"
 			"   --help\n"
 			);
@@ -205,6 +210,7 @@ void cmdHello(void *base, risp_length_t length, risp_data_t *data)
 	// The base pointer that is passed thru the library doesnt know about the session structure we 
 	// are using, so we need to make a cast-pointer for it.
  	session_t *session = (session_t *) base;
+	assert(session);
 	assert(session->verify == 123456789);
 	
 	assert(session->id >= 0);
@@ -221,8 +227,8 @@ void cmdHello(void *base, risp_length_t length, risp_data_t *data)
 	assert((length > 0 && data) || (length == 0 && data == NULL));
 	
 	// Check if the session is already authenticated
-	assert(session->data.authenticated == 0 || session->data.authenticated == 1);
-	if (session->data.authenticated == 1) {
+	assert(session->data.established == 0 || session->data.established == 1);
+	if (session->data.established == 1) {
 		// session has already been authenticated, and it is illegal to attempt to authenticate again.
 		printf("Session[%d] was already authenticated. Closing.\n", session->id);
 		session_close(session);
@@ -247,8 +253,8 @@ void cmdHello(void *base, risp_length_t length, risp_data_t *data)
 				// additional commands.
 				
 				// Indicate that session is now authenticated.
-				assert(session->data.authenticated == 0);
-				session->data.authenticated = 1;
+				assert(session->data.established == 0);
+				session->data.established = 1;
 
 				// since this authentication should happen before any other data is given, we 
 				// should check that everything else is in an init state.
@@ -283,8 +289,8 @@ static bool checkAuth(session_t *session)
 	assert(session->id >= 0);
 	
 	// Check if the session is already authenticated
-	assert(session->data.authenticated == true || session->data.authenticated == false);
-	if (session->data.authenticated == false) {
+	assert(session->data.established == true || session->data.established == false);
+	if (session->data.established == false) {
 		// session has not been authenticated, and it is illegal to attempt to operations without 
 		// authenticating first..
 		fprintf(stderr, "Closing connection.  Not Authenticated.\n");
@@ -633,7 +639,7 @@ void relay_msg(session_t *relay, int msgID, unsigned char *name, int length, uns
 	assert(data);
 	// name can be NULL, so we have nothing to assert on that (although it should be less than 256 bytes).
 	
-	if (relay->id >= 0 && relay->data.authenticated == true) {
+	if (relay->id >= 0 && relay->data.established == true) {
 		if (relay->data.follow == true) { 
 			printf("Sending FULL message(%d) to session[%d]\n", msgID, relay->id);
 			rispsession_send_int(relay->session_ptr, CMD_MSG_ID, msgID);
@@ -769,12 +775,41 @@ void break_cb(RISPSTREAM stream, void *data)
 }
 
 
+
+static int verify_user(maindata_t *maindata, const char *username)
+{
+	int found = 0;
+
+	if (maindata->users) {
+		
+		// go through the list, looking for the username.
+		int counter=0;
+		while (found == 0 && maindata->users[counter]) {
+			if (strcmp(username, maindata->users[counter]) != 0) {
+				found = 1;
+			}
+			else {
+				counter++;
+			}
+		}
+	}
+
+	return(found);
+}
+
+
+
 // TODO: Should change this logic to re-use sessions.
 session_t * session_new(maindata_t *maindata, RISPSESSION streamsession)
 {
 	assert(maindata);
 	assert(streamsession);
-
+	assert(maindata->verify == 0xc001b33f);
+	
+	// to indicate when this function is called.
+	fprintf(stderr, "---> session_new();\n");
+	
+	
 	// allocate space for the object, and clear it too.
 	session_t *session = calloc(1, sizeof(session_t));
 	assert(session);
@@ -792,17 +827,38 @@ session_t * session_new(maindata_t *maindata, RISPSESSION streamsession)
 		found = maindata->sessions.max;
 		maindata->sessions.max ++;
 	}
+	assert(found >= 0);
 	
 	maindata->sessions.list[found] = session;
 
-	session->id = maindata->sessions.max;
+	session->id = found;
 	session->verify = 123456789;
 	session->maindata = maindata;
 	session->session_ptr = streamsession;
 	
+	// this will ask the RISP session if there was any authorisation information (certificates)
+	assert(streamsession);
+	char *certname = rispsession_get_session_auth_certname(streamsession);
+	if (certname) {
+		// we need to check if the cert is in the users list.
+		fprintf(stderr, "##### Client cert name: %s\n", certname);
+		if (verify_user(maindata, certname) == 1) {
+			fprintf(stderr, "User Validated[%d]\n", session->id);
+			session->data.authenticated = true;
+		}
+		else {
+			assert(session->data.authenticated == false);
+		}
+		free(certname);
+		certname = NULL;
+	}
+	else {
+		fprintf(stderr, "##$### Client Cert Not Received.\n");
+	}
+	
 	// Set the defaults
 	session->data.name[0] = 0;
-	session->data.authenticated = false;
+	session->data.established = false;
 	session->data.echo = false;
 	session->data.follow = true;
 	session->data.update = true;
@@ -820,6 +876,7 @@ void newconn_cb(RISPSESSION streamsession, void *dataptr)
 	assert(dataptr);
 	maindata_t *maindata = dataptr;
 	assert(maindata);
+	assert(maindata->verify == 0xc001b33f);
 
 	fprintf(stderr, "Newconn\n");
 	
@@ -849,13 +906,16 @@ void connclosed_cb(RISPSESSION streamsession, void *dataptr)
 	
 	maindata_t *maindata = dataptr;
 	assert(maindata);
+	assert(maindata->verify == 0xc001b33f);
 	
 	// we need to go through the list in maindata, to find this particular session.  When we have found it, we remove it.
 	assert(maindata->sessions.list);
 	assert(maindata->sessions.max > 0);
-	int index;
+	
+	fprintf(stderr, "Session Closed.  Finding in the list.  Max:%d\n", maindata->sessions.max);
+	
 	short found = 0; 
-	for (index=0; index < maindata->sessions.max; index++) {
+	for (int index=0; index < maindata->sessions.max; index++) {
 		if (maindata->sessions.list[index]) {
 			if (maindata->sessions.list[index]->session_ptr == streamsession) {
 				// free the resources used by the session, and the session object itself.
@@ -880,6 +940,8 @@ maindata_t * maindata_init(void)
 {
 	maindata_t *data = calloc(1, sizeof(maindata_t));
 	assert(data);
+	
+	data->verify = 0xc001b33f;
 
 	data->sessions.list = NULL;
 	data->sessions.max = 0;
@@ -887,8 +949,110 @@ maindata_t * maindata_init(void)
 	data->messages.list = NULL;
 	data->messages.latest = 0;
 	
+	// users will be a null terminated array of strings.
+	data->users = NULL;
+	
 	return(data);
 }
+
+
+void maindata_free(maindata_t *data)
+{
+	assert(data);
+	
+	// ...
+	
+	assert(data->verify == 0xc001b33f);
+
+	if (data->users) {
+		int u = 0;
+		
+		while (data->users[u]) {
+			free(data->users[u]);
+			u++;
+		}
+		
+		free(data->users);
+		data->users = NULL;
+	}
+	
+	assert(data->sessions.list == NULL);
+	assert(data->messages.list == NULL);
+	assert(data->users == NULL);
+	
+	free(data);
+}
+
+
+void load_userfile(char *userfile, maindata_t *data)
+{
+	assert(userfile);
+	assert(data);
+	
+	// since we are loading in the userfile, the list of users should be NULL at this point.
+	assert(data->users == NULL);
+	
+	data->users = malloc(sizeof(char **));
+	int ulen = 0;
+	
+	FILE *fp = fopen(userfile, "r");
+	if (fp) {
+		
+		while (!feof(fp)) {
+			char *line = NULL;
+			size_t linelen = 0;
+			
+			ssize_t res = getline(&line, &linelen, fp);
+			if (res >= 0) {
+				assert(linelen > res);
+				
+				// we have a line.
+				if (res > 0) {
+					// if the line starts with '#' we want to ignore it.
+					if (line[0] != '#') {
+						
+						// trim the 
+						while (res > 0 && (line[res-1] == ' ' || line[res-1] == '\n' || line[res] == '\r' || line[res] == '\t'))  {
+							res --;
+							line[res] = 0;
+						}
+						
+						// if we still have a line....
+						if (res == 0) {
+							free(line);
+							line = NULL;
+						} 
+						else {
+							line = realloc(line, res+1);
+			
+							// we have a username.  Add it to the list.
+							assert(ulen >= 0);
+							assert(data->users[ulen] == NULL);
+							data->users[ulen] = line;
+							line = NULL;
+							ulen ++;
+							assert(ulen >= 0);
+							data->users = realloc(data->users, ulen * sizeof(char *));
+							assert(data->users);
+							data->users[ulen] = NULL;
+						}
+					}
+				}
+			}
+			
+			if (line) { 
+				free(line); 
+				line = NULL; 
+			}
+		}
+		
+		fclose(fp);
+	}
+}
+
+
+
+
 
 
 //-----------------------------------------------------------------------------
@@ -900,6 +1064,7 @@ int main(int argc, char **argv)
 	char *cafile = NULL;
 	char *certfile = NULL;
 	char *keyfile = NULL;
+	char *userfile = NULL;
 	int port = DEFAULT_PORT;
 	bool verbose = false;
 
@@ -914,6 +1079,7 @@ int main(int argc, char **argv)
 			{"client-ca", required_argument, 0,  'c' },
 			{"cert",      required_argument, 0,  's' },
 			{"key",       required_argument, 0,  'k' },
+			{"userfile",  required_argument, 0,  'u' },
 			{"help",      no_argument,       0,  'h' },
 			{"verbose",   no_argument,       0,  'v' },
 			{0,           0,                 0,  0 }
@@ -925,6 +1091,7 @@ int main(int argc, char **argv)
 			"c:" /* Client Certificate Chain */
 			"s:" /* Server Certificate */
 			"k:" /* Private Key file for Server Certificate */
+			"u:" /* Userfile for authentication */
 			"h"  /* help... show usage info */
 			"v"  /* verbosity */
 			, long_options, &option_index);
@@ -933,9 +1100,8 @@ int main(int argc, char **argv)
 
 		switch (c) {
 			case 0:
-				printf("Unknown option %s", long_options[option_index].name);
-				if (optarg)
-					printf(" with arg %s", optarg);
+				fprintf(stderr, "Unknown option %s", long_options[option_index].name);
+				if (optarg) { fprintf(stderr, " with arg %s", optarg); }
 				printf("\n");
 				break;
 			case 'h':
@@ -962,10 +1128,16 @@ int main(int argc, char **argv)
 				assert(certfile == NULL);
 				certfile = optarg;
 				assert(certfile);
+				break;
 			case 'k':
 				assert(keyfile == NULL);
 				keyfile = optarg;
 				assert(keyfile);
+				break;
+			case 'u':
+				assert(userfile == NULL);
+				userfile = optarg;
+				assert(userfile);
 				break;
 			default:
 				fprintf(stderr, "Illegal argument \"%c\"\n", c);
@@ -973,13 +1145,14 @@ int main(int argc, char **argv)
 		}
 	}
 
-	if (verbose > 1) { printf("Interface: %s\n", interface); }
-	if (verbose > 1) { printf("Listening Port: %d\n", port); }
-	if (verbose > 1) { printf("CA File: %s\n", cafile); }
-	if (verbose > 1) { printf("Cert File: %s\n", certfile); }
-	if (verbose > 1) { printf("Key File: %s\n", keyfile); }
+	if (verbose > 1) { fprintf(stderr, "Interface: %s\n", interface); }
+	if (verbose > 1) { fprintf(stderr, "Listening Port: %d\n", port); }
+	if (verbose > 1) { fprintf(stderr, "CA File: %s\n", cafile); }
+	if (verbose > 1) { fprintf(stderr, "Cert File: %s\n", certfile); }
+	if (verbose > 1) { fprintf(stderr, "Key File: %s\n", keyfile); }
 
 	if (verbose) fprintf(stderr, "Finished processing command-line args\n");
+	
 
 	// initialise the rispstream.  We dont pass any parameters in, we build up functionality after.
 	RISPSTREAM stream = rispstream_init(NULL);
@@ -1020,18 +1193,37 @@ int main(int argc, char **argv)
 	assert(data);
 	rispstream_set_userdata(stream, data);
 
+	// if the user specified a userfile, it will load the contents into the maindata structure.  This will be used to validate client connections.
+	if (userfile) {
+		load_userfile(userfile, data);
+		assert(data->users);
+		
+		if (verbose > 0) {
+			int u=0;
+			while (data->users[u]) { fprintf(stderr, "User: '%s'\n", data->users[u]); u++; }
+		}
+	}
+	else {
+		assert(data->users == NULL);
+	}
+	
 	// if the user has specified to use certificates, then they needed to be loaded into the 
 	// rispstream instance.  Once certificates are applied, all client connections must also
 	// be secure.
-	if (cafile && keyfile) {
-		if (verbose > 1) { fprintf(stderr, "Loading Certificate and Private Keys\n"); }
-		int result = rispstream_add_server_certs(stream, cafile, keyfile);
+	if (cafile && certfile && keyfile) {
+		if (verbose > 1) { fprintf(stderr, "Loading CA, Certificate and Private Keys\n"); }
+		int result = rispstream_add_server_certs(stream, cafile, certfile, keyfile);
 		if (result != 0) {
 			fprintf(stderr, "Unable to load Certificate and Private Key files.\n");
 			exit(1);
 		}
 		assert(result == 0);
-		if (verbose) { printf("Certificate files loaded.\n"); }
+		
+		assert(stream);
+		assert(cafile);
+		rispstream_require_client_certs(stream, cafile);
+		
+		if (verbose) { fprintf(stderr, "Certificate files loaded.\n"); }
 	}
 	
 	// When the user presses Ctrl-C, we want the service to exit (cleanly).  
