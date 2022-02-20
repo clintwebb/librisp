@@ -92,6 +92,7 @@ RISP risp_init(void)
 
 	// The 'commands' are expected to be a 16-bit unsigned integer.
 	assert(sizeof(risp_command_t) == 2);
+	assert(RISP_MAX_USER_CMD > 0);
 	assert(RISP_MAX_USER_CMD <= (256*256));
 
 	// allocate memory for the main struct.
@@ -183,7 +184,9 @@ void risp_add_command(RISP r, risp_command_t command, void *callback)
 		
 		assert(risp->verifier == RISP_STRUCT_VERIFIER);
 		if (risp->verifier == RISP_STRUCT_VERIFIER) {
+			// currently asserting if a callback was already specified for this command.   There is currently no valid reason to change a call-back.  However, if there does become a valid reason, a different function can be created to specifically replace a callback.
 			assert(risp->commands[command].callback == NULL);
+
 			risp->commands[command].callback = callback;
 		}
 	}
