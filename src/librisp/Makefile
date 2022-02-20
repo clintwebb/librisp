@@ -26,7 +26,8 @@ LIBDIR=$(DESTDIR)/usr/lib
 INCDIR=$(DESTDIR)/usr/include
 
 
-MANPATH=/usr/local/man
+MANPATH=/usr/share/man
+
 
 all: $(WORKDIR)/$(LIBFILE)
 package: $(WORKDIR)/$(LIBNAME)-$(LIBVER).tar.gz

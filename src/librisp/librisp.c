@@ -83,7 +83,13 @@ RISP risp_init(void)
 	assert(sizeof(int) == 4);
 	// (long) by itself could be either 4 or 8, depending on if it is running on 32-bit or 64-bit system.
 	assert(sizeof(long long) == 8);
-	
+
+	// risp_int_t should be 64-bit long.
+	assert(sizeof(risp_int_t) == 8);
+
+	// we also do some bit manipulation of the command, and assume that it is 2 bytes only.
+	assert(sizeof(risp_command_t) == 2);
+
 	// The 'commands' are expected to be a 16-bit unsigned integer.
 	assert(sizeof(risp_command_t) == 2);
 	assert(RISP_MAX_USER_CMD <= (256*256));
@@ -264,12 +270,6 @@ risp_length_t risp_process(RISP r, void *base, risp_length_t len, const void *da
 	itcount ++;
 // 	fprintf(stderr, "RISP Process: itcount:%d, len=%ld\n", itcount, len);
 #endif
-	
-	// risp_int_t should be 64-bit long.
-	assert(sizeof(risp_int_t) == 8);
-	
-	// we also do some bit manipulation of the command, and assume that it is 2 bytes only.
-	assert(sizeof(risp_command_t) == 2);
 	
 	// callback function prototypes.
 	void (*func_nul)(void *base) = NULL;
