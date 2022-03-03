@@ -294,10 +294,6 @@ risp_length_t risp_process(RISP r, void *base, risp_length_t len, const void *da
 			assert(len > 0);
 			assert(data != NULL);
 			
-
-			// sanity check.
-			assert(sizeof(risp_command_t) == 2);
-			
 			// Need at least 2 bytes for the command.
 			int cont = 1;
 			while(cont != 0 && left >= sizeof(risp_command_t)) {

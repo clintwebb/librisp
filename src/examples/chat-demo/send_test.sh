@@ -2,7 +2,7 @@
 
 # Send lots of messages to the server.
 
-CYCLES=1000
+CYCLES=10
 
 while [ $CYCLES -gt 0 ]; do
 
@@ -13,7 +13,7 @@ while [ $CYCLES -gt 0 ]; do
   ./risp_chat_send -n "Marley" -m "Same" &
   ./risp_chat_send -n "Franken" -m "Hi Guys" &
   ./risp_chat_send -n "Wilber" -m "Yo" &
-  wait $!
+  wait
 
   CYCLES=$((CYCLES-1))
 done

@@ -4,6 +4,7 @@
 //   library to handle the low-level operations of a RISP based data stream.
 //
 //   Copyright (C) 2016  Clinton Webb
+//   Copyright (C) 2022  Clinton Webb
 
 /*
     This program is distributed in the hope that it will be useful,

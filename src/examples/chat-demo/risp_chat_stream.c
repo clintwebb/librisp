@@ -3,6 +3,7 @@
 // received.
 /*
     Copyright (C) 2016  Clinton Webb
+    Copyright (C) 2022  Clinton Webb
     
     This program is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -39,8 +40,8 @@
 // The data that is used by the stream session.  
 // Note that this code is assuming that it has one connection to the server and therefore doesn't keep seperate data sets for more than one session.  Since we only have one session, we just keep it all in one place.
 typedef struct {
-	RISPSTREAM *stream;
-	RISPSESSION *session;
+	RISPSTREAM	*stream;
+	RISPSESSION	*session;
 	
 	risp_int_t msg_id;
 	risp_int_t latest_msg_id;
@@ -181,13 +182,16 @@ void connect_cb(RISPSESSION session, void *basedata)
 	assert(data->session == NULL);
 	data->session = session;
 	
-// 	fprintf(stderr, "CONNECT CALLBACK.\n");
+	fprintf(stderr, "CONNECT CALLBACK.\n");
 	
 	// Since we are now connected, we need to send the Hello command and the other init commands.
 
 	// to authenticate, we simply must provide the proper HELLO string.  
 	unsigned char hello_str[] = "RISP Server";
 	rispsession_send_str(session, CMD_HELLO, strlen((char*)hello_str), hello_str);
+
+	// since all sessions are using the same base-data, we dont need seperate data structure for each session.
+	rispsession_set_userdata(session, data);
 	
 	// By default, the session we create will automatically receive the data of new messages being sent.
 	
@@ -250,6 +254,7 @@ int main(int argc, char **argv)
 	char *srv = "127.0.0.1";
 	int port = DEFAULT_PORT;
 	char *cafile = NULL;
+	char *pemfile = NULL;
 	char *keyfile = NULL;
 	int force_enc = 0;
 
@@ -267,7 +272,8 @@ int main(int argc, char **argv)
 			"p:" /* port */
 			"s:" /* Server host */
 			"e"  /* use encryption for the connection. */
-			"c:" /* Certificate Chain */
+			"a:" /* Certificate Chain */
+			"c:" /* Certificate file */
 			"k:" /* Private Key file */
 			"h"  /* help */ 
 		))) {
@@ -280,10 +286,15 @@ int main(int argc, char **argv)
 				srv = strdup(optarg);
 				assert(srv != NULL);
 				break;				
-			case 'c':
+			case 'a':
 				assert(cafile == NULL);
 				cafile = optarg;
 				assert(cafile);
+				break;
+			case 'c':
+				assert(pemfile == NULL);
+				pemfile = optarg;
+				assert(pemfile);
 				break;
 			case 'k':
 				assert(keyfile == NULL);
@@ -295,11 +306,14 @@ int main(int argc, char **argv)
 				break;
 			case 'h':
 			default:
-				printf("usage:\n\nrisp_chat_stream [-s server] [-p port] [-e] [-c cafile] [-k keyfile] [-h]\n");
+				printf("usage:\n\nrisp_chat_stream [-s server] [-p port] [-e] [-a cafile] [-c certfile] [-k keyfile] [-h]\n");
 				exit(1);
 				break;
 		}
 	}
+
+	printf("cafile: %s\npemfile: %s\nkeyfile: %s\n", cafile, pemfile, keyfile);
+
 
 	// get an initialised risp structure.
 	RISP risp = risp_init();
@@ -335,9 +349,10 @@ int main(int argc, char **argv)
 	// if the user has specified to use certificates, then they needed to be loaded into the 
 	// rispstream instance.  Once certificates are applied, all client connections must also
 	// be secure.
-	if (cafile && keyfile) {
+	if (cafile && pemfile && keyfile) {
 		fprintf(stderr, "Loading Certificate and Private Keys\n");
-		int result = rispstream_add_client_certs(data.stream, cafile, keyfile);
+		assert(data.stream && cafile && pemfile && keyfile);
+		int result = rispstream_add_client_certs(data.stream, cafile, pemfile, keyfile);
 		if (result != 0) {
 			fprintf(stderr, "Unable to load Certificate and Private Key files.\n");
 			exit(1);

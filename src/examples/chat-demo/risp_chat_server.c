@@ -7,7 +7,8 @@
 
 /*
     Copyright (C) 2016  Clinton Webb
-    
+    Copyright (C) 2022  Clinton Webb
+
     This program is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
@@ -1067,6 +1068,12 @@ int main(int argc, char **argv)
 	char *userfile = NULL;
 	int port = DEFAULT_PORT;
 	bool verbose = false;
+
+	assert(RISP_VERSION >= 0x00040200);
+	if (RISP_VERSION < 0x00040200) {
+		fprintf(stderr, "Requires RISP library version 4.02.00 or higher\n");
+	}
+
 
 	// set stderr non-buffering (for running under, say, daemontools)
 	setbuf(stderr, NULL);

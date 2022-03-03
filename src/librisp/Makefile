@@ -87,7 +87,7 @@ install: $(WORKDIR)/$(LIBFILE)
 
 
 
-install_dev: $(INCFILE) man-pages
+install_dev: $(INCFILE) install man-pages
 	cp $(INCFILE) $(INCDIR)/
 
 

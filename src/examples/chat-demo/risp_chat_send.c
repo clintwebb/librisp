@@ -34,7 +34,7 @@
 #include "risp_chat_prot.h"
 
 
-
+int verbose = 0;
 
 typedef struct {
 	RISPSTREAM stream;
@@ -71,7 +71,7 @@ void cmdHelloAck(void *base)
 	assert(data);
 	assert(data->session);
 	
-	printf("Connected.\n");
+	if (verbose > 0) { printf("Connected.\n"); }
 	
 	// set the session in NO ECHO mode.
 	rispsession_send_noparam(data->session, CMD_NOECHO);
@@ -111,7 +111,7 @@ void connect_cb(RISPSESSION session, void *basedata)
 	assert(data->session == NULL);
 	data->session = session;
 	
-	fprintf(stderr, "CONNECT CALLBACK.\n");
+	if (verbose > 0) { fprintf(stderr, "CONNECT CALLBACK.\n"); }
 
 	// we will use the same basedata for this one.  We dont have any session tracking data.
 	rispsession_set_userdata(session, basedata);
@@ -152,7 +152,7 @@ void close_cb(RISPSESSION session, void *basedata)
 	}
 	else {
 		assert(data->session == session);
-		fprintf(stderr, "Connection closed.\n");
+		if (verbose > 0) { fprintf(stderr, "Connection closed.\n"); }
 	}
 	
 // 	assert(data->stream);
@@ -209,6 +209,7 @@ int main(int argc, char **argv)
 		"n:" /* name of the message sender */
 		"m:" /* message to send */
 		"h"  /* command usage */
+		"v"  /* verbose */
 	)) != -1) {
 		switch (c) {
 			case 'p':
@@ -241,6 +242,10 @@ int main(int argc, char **argv)
 			case 'm':
 				data.message = strdup(optarg);
 				assert(data.message);
+				break;
+			case 'v':
+				assert(verbose >= 0);
+				verbose ++;
 				break;
 			case 'h':
 				printf("Usage: ./risp_chat_send -s [server] -p [port] -n \"name of sender\" -m \"Message\"\n\n");
@@ -284,14 +289,14 @@ int main(int argc, char **argv)
 	// rispstream instance.  Once certificates are applied, all client connections must also
 	// be secure.
 	if (certfile && keyfile) {
-		fprintf(stderr, "Loading Certificate and Private Keys\n");
+		if (verbose > 0) { fprintf(stderr, "Loading Certificate and Private Keys\n"); }
 		int result = rispstream_add_client_certs(data.stream, cafile, certfile, keyfile);
 		if (result != 0) {
 			fprintf(stderr, "Unable to load Certificate and Private Key files.\n");
 			exit(1);
 		}
 		assert(result == 0);
-		printf("Certificate files loaded.\n");
+		if (verbose > 0) { printf("Certificate files loaded.\n"); }
 	}
 
 	// Initiate a connection.  Note that it will only QUEUE the request, and will not actually attempt 
@@ -304,7 +309,7 @@ int main(int argc, char **argv)
 	// When there are no more events, it will exit.
 	// When the socket closes, this function should exit.
 	rispstream_process(data.stream);	
-	fprintf(stderr, "FINISHED.  SHUTTING DOWN\n");
+	if (verbose > 0) { fprintf(stderr, "FINISHED.  SHUTTING DOWN\n"); }
 	
 	// Not really needed, but good to do it out of habbit before actually cleaning up the risp object itself.
 	rispstream_detach_risp(data.stream);

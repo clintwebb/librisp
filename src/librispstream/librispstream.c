@@ -3,6 +3,7 @@
     librispstrem
     see rispstream.h for details.
     Copyright (C) 2015  Clinton Webb
+    Copyright (C) 2022  Clinton Webb
 
     This program is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -336,7 +337,7 @@ static void session_read_handler(struct bufferevent *bev, void *data)
 	session_t *session = data;
 	assert(session != NULL);
 
-// 	fprintf(stderr, "Data received.\n");
+// 	fprintf(stderr, "session_read_handler: Data received.\n");
 	
 	assert(bev == session->bev);
 
@@ -437,6 +438,9 @@ void session_buffer_handler(struct bufferevent *bev, short events, void *ptr)
 	stream_t *stream = session->stream;
 	assert(stream);
 
+// 	fprintf(stderr, "session_buffer_handler().\n");
+
+
     if (events & BEV_EVENT_CONNECTED) {
 		// we have successfully connected.
 		assert(session->bev == NULL || session->bev == bev);
@@ -449,15 +453,19 @@ void session_buffer_handler(struct bufferevent *bev, short events, void *ptr)
 			bufferevent_setwatermark(session->bev, EV_READ, session->buffwait, 0);
 		}
 		
-		fprintf(stderr, "Connection received.\n");
+// 		fprintf(stderr, "Connection established.\n");
 		assert(stream);
 		if (stream->newconn_callback_fn) {
-			assert(session->usersession == NULL);
+
+			// if we are listening, then this should not be NULL.
+			// if we are connecintg, then this should be NULL.
+
+ 			assert(session->usersession == NULL);
 			(*stream->newconn_callback_fn)(session, stream->userdata);
 		}
     } 
     else if (events & (BEV_EVENT_ERROR|BEV_EVENT_EOF)) {
-		fprintf(stderr, "SESSION CLOSED\n");
+// 		fprintf(stderr, "SESSION CLOSED\n");
 		assert(session->bev == bev);
 		assert(stream);
 		if (stream->connclosed_callback_fn) {
@@ -487,9 +495,10 @@ static session_t * session_new(stream_t *stream, int handle)
 	assert(session);
 	
 	session->stream = stream;
-	session->closing = 0;
-	session->close_event = NULL;
-	session->bev = NULL;
+	assert(session->closing == 0);
+	assert(session->close_event == NULL);
+	assert(session->bev == NULL);
+	assert(session->usersession == NULL);
 	session->buffwait = 2;
 	
 	// if the stream is setup to use certificates, then this session will need to be also.
@@ -525,9 +534,18 @@ static session_t * session_new(stream_t *stream, int handle)
 		bufferevent_setwatermark(session->bev, EV_READ, session->buffwait, 0);
 
 		// Need to set the callback routine when new data arrives.
-		fprintf(stderr, "Read handler set.\n");
+// 		fprintf(stderr, "Read handler set.\n");
 		bufferevent_setcb(session->bev, session_read_handler, NULL, session_buffer_handler, session);
 		bufferevent_enable(session->bev, EV_READ|EV_WRITE);
+
+		// ***
+		assert(stream);
+		if (stream->newconn_callback_fn) {
+			assert(session->usersession == NULL);
+			assert(stream->userdata);
+			(*stream->newconn_callback_fn)(session, stream->userdata);
+		}
+
 		
 		// TODO: If there is an idle callback, then we set it with a timeout.
 	}
@@ -586,14 +604,15 @@ char * rispsession_get_session_auth_certname(RISPSESSION sessionptr)
 
 	char *certname = NULL;
 
-	assert(session->client_ssl);
-	X509 *cert = SSL_get_peer_certificate(session->client_ssl);
-	if (cert) {
-		assert(cert);
-		// we have the cert.  Now we need to get the name from it.
+	if (session->client_ssl) {
+		X509 *cert = SSL_get_peer_certificate(session->client_ssl);
+		if (cert) {
+			// we have the cert.  Now we need to get the name from it.
 
-		// TODO: X509_NAME_oneline is deprecated and should be replaced with something else.
-		certname = X509_NAME_oneline(X509_get_subject_name(cert), NULL, 0);
+			// TODO: X509_NAME_oneline is deprecated and should be replaced with something else.
+			certname = X509_NAME_oneline(X509_get_subject_name(cert), NULL, 0);
+			assert(certname);
+		}
 	}
 
 	return(certname);
@@ -607,6 +626,8 @@ void rispsession_set_userdata(RISPSESSION sessionptr, void *sessiondata)
 	
 	assert(session);
 	assert(sessiondata);
+
+// 	fprintf(stderr, "Userdata set\n");
 	
 	assert(session->usersession == NULL);
 	session->usersession = sessiondata;
@@ -646,7 +667,7 @@ int rispstream_connect(RISPSTREAM streamptr, char *host, int port, void *basedat
 			bufferevent_setcb(session->bev, session_read_handler, NULL, session_buffer_handler, session);
 			bufferevent_enable(session->bev, EV_READ|EV_WRITE);
 			
-			assert(stream->dns_base);
+//			assert(stream->dns_base);
 			assert(host);
 			assert(port > 0);
 			int rc = bufferevent_socket_connect_hostname(session->bev, stream->dns_base, AF_UNSPEC, host, port);
@@ -715,7 +736,7 @@ static void listen_event_handler(
 	addr[0] = 0;
 	struct sockaddr_in *sin = (struct sockaddr_in *) address;
 	inet_ntop(AF_INET, &(sin->sin_addr), addr, INET_ADDRSTRLEN);
-	fprintf(stderr, "New connection received (%s). \n", addr);
+// 	fprintf(stderr, "New connection received (%s). \n", addr);
 	
 	// Create the session object.
 	session_t *session = session_new(stream, fd);
@@ -883,7 +904,7 @@ void rispsession_close(RISPSESSION sessionptr)
 	stream_t *stream = session->stream;
 	assert(stream);
 
-	fprintf(stderr, "RISPSESSION: Closing Session\n");
+// 	fprintf(stderr, "RISPSESSION: Closing Session\n");
 	
 	// mark the session as closing.  If we dont close the session now, then it will be closed when the outbuffer is emptied.
 	assert(session->closing == 0);
@@ -897,31 +918,31 @@ void rispsession_close(RISPSESSION sessionptr)
 	size_t len = evbuffer_get_length(output);
 	assert(len >= 0);
 	if (len > 0) {
-		fprintf(stderr, "RISPSESSION: Session is not empty (%lu).  Waiting for empty.\n", len);
+// 		fprintf(stderr, "RISPSESSION: Session is not empty (%lu).  Waiting for empty.\n", len);
 		assert(session->buffwait != -1);
 		bufferevent_disable(session->bev, EV_READ);
 		bufferevent_setcb(session->bev, NULL, session_write_handler, session_buffer_handler, session);
 	}
 	else {
-		fprintf(stderr, "RISPSESSION: Session is empty (%lu).  Closing Now.\n", len);
+// 		fprintf(stderr, "RISPSESSION: Session is empty (%lu).  Closing Now.\n", len);
 		bufferevent_disable(session->bev, EV_READ|EV_WRITE);
 		
 		SSL *ctx = bufferevent_openssl_get_ssl(session->bev);
-		assert(ctx);
-
-		/*
-		* SSL_RECEIVED_SHUTDOWN tells SSL_shutdown to act as if we had already
-		* received a close notify from the other end.  SSL_shutdown will then
-		* send the final close notify in reply.  The other end will receive the
-		* close notify and send theirs.  By this time, we will have already
-		* closed the socket and the other end's real close notify will never be
-		* received.  In effect, both sides will think that they have completed a
-		* clean shutdown and keep their sessions valid.  This strategy will fail
-		* if the socket is not ready for writing, in which case this hack will
-		* lead to an unclean shutdown and lost session on the other end.
-		*/
-		SSL_set_shutdown(ctx, SSL_RECEIVED_SHUTDOWN);
-		SSL_shutdown(ctx);
+		if (ctx) {
+			/*
+			* SSL_RECEIVED_SHUTDOWN tells SSL_shutdown to act as if we had already
+			* received a close notify from the other end.  SSL_shutdown will then
+			* send the final close notify in reply.  The other end will receive the
+			* close notify and send theirs.  By this time, we will have already
+			* closed the socket and the other end's real close notify will never be
+			* received.  In effect, both sides will think that they have completed a
+			* clean shutdown and keep their sessions valid.  This strategy will fail
+			* if the socket is not ready for writing, in which case this hack will
+			* lead to an unclean shutdown and lost session on the other end.
+			*/
+			SSL_set_shutdown(ctx, SSL_RECEIVED_SHUTDOWN);
+			SSL_shutdown(ctx);
+		}
 		
 		bufferevent_free(session->bev);
 		session->bev = NULL;
@@ -1077,11 +1098,9 @@ int cert_passphrase_cb(char *buf, int size, int rwflag, void *userdata)
 	assert(buf);
 	assert(userdata);
 	
-	fprintf(stderr, "Passphrase Callback (size:%d)\n", size);
-
+// 	fprintf(stderr, "Passphrase Callback (size:%d)\n", size);
 	
 	int len = 0;
-	
 	stream_t *stream = userdata;
 	assert(stream->sverify == STRUCT_VERIFIER);
 	if (stream->sverify == STRUCT_VERIFIER) {
@@ -1142,14 +1161,14 @@ int rispstream_add_server_certs(RISPSTREAM streamptr, const char *ca_file, const
 		SSL_CTX_set_options(stream->server_ctx, SSL_OP_NO_SSLv2);
 	}
 	
-	// return 0 if the context was created, otherwise a 1.
+	// return 0 if the context was created, otherwise a -1.
 	return stream->server_ctx ? 0 : -1;
 }
 
 
 int callback_ssl_verify(int preverify_ok, X509_STORE_CTX *x509_ctx)
 {
-	fprintf(stderr, "VERIFY CALLBACK: preverify=%d\n", preverify_ok);
+// 	fprintf(stderr, "VERIFY CALLBACK: preverify=%d\n", preverify_ok);
 	return(1); // 1 indicated that normal internal verification is to continue.
 }
 

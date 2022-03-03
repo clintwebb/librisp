@@ -26,7 +26,7 @@ LIBDIR=$(DESTDIR)/usr/lib
 INCDIR=$(DESTDIR)/usr/include
 
 
-MANPATH=/usr/local/man
+MANPATH=/usr/share/man
 
 all: $(WORKDIR)/$(LIBFILE)
 package: $(WORKDIR)/$(LIBNAME)-$(LIBVER).tar.gz
@@ -86,7 +86,7 @@ install: $(WORKDIR)/$(LIBFILE)
 
 
 
-install_dev: $(INCFILE) $(WORKDIR)/$(LIBNAME).o
+install_dev: $(INCFILE) $(WORKDIR)/$(LIBNAME).o install
 	@echo "Copying $(INCFILE) to $(INCDIR)/"
 	cp -v $(INCFILE) $(INCDIR)/
 	@echo "Copying $(WORKDIR)/$(LIBNAME).o to $(LIBDIR)"
