@@ -409,7 +409,7 @@ risp_length_t risp_process(RISP r, void *base, risp_length_t len, const void *da
 
 	assert(processed + left == len);
 	
-	assert(processed >= 0);	
+	assert(processed >= 0);
 	assert(processed <= len);
 
 	// looks like we are returning the number of bytes processed, rather than the amount left in the buffer.
