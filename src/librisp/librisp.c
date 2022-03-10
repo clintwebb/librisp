@@ -87,10 +87,7 @@ RISP risp_init(void)
 	// risp_int_t should be 64-bit long.
 	assert(sizeof(risp_int_t) == 8);
 
-	// we also do some bit manipulation of the command, and assume that it is 2 bytes only.
-	assert(sizeof(risp_command_t) == 2);
-
-	// The 'commands' are expected to be a 16-bit unsigned integer.
+	// The 'commands' are expected to be a 16-bit unsigned integer.   we also do some bit manipulation of the command, and assume that it is 2 bytes only.
 	assert(sizeof(risp_command_t) == 2);
 	assert(RISP_MAX_USER_CMD > 0);
 	assert(RISP_MAX_USER_CMD <= (256*256));
